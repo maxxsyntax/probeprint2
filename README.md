@@ -33,13 +33,15 @@ A real time application of intelligence gained from passively monitoring wireles
 - GNU bash, version 5.2.15 
 - tshark
 - sqlite3
+- mysql/mariadb
 
 
 
 
 ## HOW TO
 put wireless interface in monitor mode
-run ./startup.sh
+build database with build_dbs.sh
+run build_ssid.sh
 
 
 
@@ -49,4 +51,38 @@ Randomized Mac does not coincide with a known Vendor OUI
 ~~BLE MAC's are not randomized~~
 
 Devices burst equally on each channel
+
+
+
+
+## Raspberry Pi Build
+ apt-get install git tshark sqlite3 iftop wavemon screen jq curl firmware-realtek firmware-misc-nonfree aircrack-ng hostapd fbi toilet fbterm ntpdate mariadb-server python3-mysqldb xxd bc
+
+git clone https://github.com/darkmentorllc/Blue2thprinting
+git clone https://github.com/maxxsyntax/probeprint2
+
+systemctl disable NetworkManager
+systemctl disable wpa_supplicant
+systemctl disable avahi-daemon
+systemctl disable mariadb
+systemctl disable ModemManager
+sudo systemctl unmask hostapd
+sudo systemctl enable hostapd
+sudo systemctl start hostapd
+
+add folloing to boot/config.txt
+dtoverlay=disable-bt
+
+Configure hosapd.conf 
+
+
+add to /home/pi/
+script.sh
+start_cap.sh
+
+
+
+
+
+
 

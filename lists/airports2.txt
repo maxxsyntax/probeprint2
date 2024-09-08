@@ -1,0 +1,56 @@
+AMS	Amsterdam [Schiphol], Netherlands
+ATL	Atlanta, GA [The William B. Hartsfield Atlanta International Airport], USA
+AYT	Antalya, Turkey
+BCN	Barcelona [Aeropuerto Transoceanico de Barcelona], Spain
+BKK	Bangkok [Don Muang International Airport], Thailand
+BOG	Bogota [Eldorado], Colombia
+BOM	Bombay [Sahar (Santa Cruz) International Airport], India
+BOS	Boston, MA [General Edward Lawrence Logan International Airport], USA
+CDG	Paris [Charles de Gaulle], France
+CGK	Jakarta [Soekarno-Hatta International Airport], Indonesia
+CJU	Cheju, South Korea
+CKG	Chongqing, China
+CLT	Charlotte, NC [Charlotte/Douglas International Airport], USA
+CUN	Cancun [Cancun International], Mexico
+DEL	Delhi [Indira Gandhi International Airport], India
+DEN	Denver, CO [Stapleton International Airport], USA
+DFW	Dallas/Fort Worth, TX [Dallas/Fort Worth International Airport], USA
+DOH	Doha, Qatar
+DXB	Dubai, United Arab Emirates
+EWR	Newark, NJ [Newark International Airport], USA
+FCO	Roma (Rome) [Leonardo da Vinci/Fiumicino], Italy
+FLL	Fort Lauderdale, FL [Fort Lauderdale/Hollywood International Airport], USA
+FRA	Frankfurt [Rhein-Main], Germany
+GRU	Sao Paulo, SP [Aeroporto Internacional Guarulhos], Brazil
+HGH	Hangzhou [Jianqiao], China
+HND	Tokyo [Haneda], Japan
+IAH	Houston, TX [Houston Intercontinental Airport], USA
+IST	Istanbul [Ataturk/Yesilkov International Airport], Turkey
+JED	Jeddah [King Abdul Aziz Airport], Saudi Arabia
+JFK	New York, NY [John F. Kennedy International Airport], USA
+KUL	Kuala Lumpur, Peninsular [Subang], Malaysia
+LAS	Las Vegas, NV [McCarran International Airport], USA
+LAX	Los Angeles, CA [Los Angeles International Airport], USA
+LGA	New York, NY [La Guardia Airport], USA
+LGW	London, England [Gatwick Airport], United Kingdom
+LHR	London, England [Heathrow Airport], United Kingdom
+MAD	Madrid [Barajas], Spain
+MCO	Orlando, FL [Orlando International Airport], USA
+MEX	Ciudad de Mexico (Mexico City) [Aeropuerto Internacional Benito Juarez], Mexico
+MIA	Miami, FL [Miami International Airport], USA
+MNL	Manila [Ninoy Aquino International Airport], Philippines
+MSP	Minneapolis/St. Paul, MN [Minneapolis-St. Paul International (Wold-Chamberlain) Airport], USA
+MUC	Muenchen (Munchen,Munich) [Franz Josef Strauss], Germany
+ORD	Chicago, IL [Chicago-O'Hare International Airport], USA
+ORY	Paris [Orly], France
+PEK	Beijing (Peking) [Capital], China
+PHX	Phoenix, AZ [Phoenix Sky Harbor International Airport], USA
+SEA	Seattle, WA [Seattle-Tacoma International Airport], USA
+SFO	San Francisco, CA [San Francisco International Airport], USA
+SGN	Ho Chi Minh City (Saigon) [Tan Son Nhut International Airport], Vietnam
+SHA	Shanghai [Hongqiao], China
+SIN	Singapore [Changi International Airport], Singapore
+SYD	Sydney, New South Wales [Kingsford Smith], Australia
+SZX	Zhenzhen (Shenzhen), China
+XIY	Xian Xianyang, China
+YYZ	Toronto, ON [Lester B. Pearson International Airport], Canada

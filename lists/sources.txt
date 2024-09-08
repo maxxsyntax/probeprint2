@@ -1,0 +1,6 @@
+#http://www.kovrik.com/sib/travel/iata-airport-codes.txt
+#https://www.cs.cmu.edu/Groups/AI/areas/nlp/corpora/names/male.txt
+#https://www.cs.cmu.edu/Groups/AI/areas/nlp/corpora/names/female.txt
+##https://data.iana.org/TLD/tlds-alpha-by-domain.txt
+#https://wigle.net/csv/ssid.csv
+#https://standards-oui.ieee.org/oui/oui.csv

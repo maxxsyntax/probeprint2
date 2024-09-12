@@ -55,4 +55,3 @@ SYD|Sydney, New South Wales [Kingsford Smith], Australia
 SZX|Zhenzhen (Shenzhen), China
 XIY|Xian Xianyang, China
 YYZ|Toronto, ON [Lester B. Pearson International Airport], Canada
-

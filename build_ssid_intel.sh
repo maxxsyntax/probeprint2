@@ -26,11 +26,11 @@ trap 'kill $(jobs -p) 2>/dev/null' EXIT
 #run functions in the backgound constantly
 
 ###Checks that require a ssid
-ssid2ssid_intel 
-categorize &
-summarize_location &
-check_name & 
-check_airport &
+#ssid2ssid_intel 
+#categorize &
+#summarize_location &
+#check_name & 
+#check_airport &
 #check_fqdn
 #check_oneloc
 
@@ -39,5 +39,17 @@ check_airport &
 #check_industry
 
 #check_address
+while true; do
+     ./standalone_ssid2ssid_intel.sh
+     ./standalone_address.sh
+     ./standalone_airport.sh
+     ./standalone_categorize.sh
+     ./standalone_check_industry
+     ./standalone_common.sh
+     ./standalone_name.sh
+     ./standalone_oneloc.sh
+     ./standalone_summarize_loc.sh
+     sleep 20
+done
 
 wait

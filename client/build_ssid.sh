@@ -2,13 +2,13 @@
 #set -x
 source .env
 INF=$1
-mkfifo pipe 2>/dev/null
+mkfifo pipe_$INF 2>/dev/null
 
 listen () {
-iwconfig $INF channel 6
+#iwconfig $INF channel 6
  while true; do 
 
-tshark -QVi $INF -a duration:3 -f "wlan subtype probe-req" -T fields -e wlan.ssid -e wlan.sa -e frame.time_epoch -e radiotap.dbm_antsignal -e wlan_radio.frequency -e wlan.seq -e wlan.vht.capabilities -E separator=\  2>/dev/null > pipe
+tshark -QVi $INF -a duration:3 -f "wlan subtype probe-req" -T fields -e wlan.ssid -e wlan.sa -e frame.time_epoch -e radiotap.dbm_antsignal -e wlan_radio.frequency -e wlan.seq -e wlan.vht.capabilities -E separator=\  2>/dev/null > pipe_$INF
 done
 }
 
@@ -23,14 +23,6 @@ while read line; do
 ssid_hex=${arr[0]}
 ssid=$(echo ${arr[0]}| xxd -r -p)
 #echo ssid is $(echo ${arr[0]}| xxd -r -p)
-if [ $online -eq 1 ]
-then
-	#curl -s -H 'Accept:application/json' -u $APIKEY --basic https://api.wigle.net/api/v2/network/search?ssid="$ssid_uri" -o locs/"$ssid_hex".location
-	if [ $ssid_hex != "<MISSING>" ]
-	then
-	./summarize_location.sh $ssid_hex
-	fi
-fi
 if [ $ssid_hex != "<MISSING>" ]
 
 then
@@ -51,7 +43,7 @@ fi
 mysql -u pi -h 192.168.1.1 probeprint <<< "INSERT ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht) values (\"${arr[0]}\",\"${arr[1]}\",\"${arr[2]}\",\"${arr[3]}\",\"${arr[4]}\",\"${arr[5]}\",\"${arr[6]}\");"
 
 #sleep 3
-done < pipe
+done < pipe_$INF
 sleep .1
 done
 }

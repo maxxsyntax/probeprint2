@@ -11,4 +11,3 @@ while read ssid_hex; do
 
 ssid2loc
 done <<< $(mysql -N probeprint <<< "select distinct ssid_hex from ssid where ssid_hex not like '%00%' and ssid_hex not like '%fff%' ;")
-# done < ssid_list_june22.db       

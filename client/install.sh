@@ -22,5 +22,5 @@ x=$(((RANDOM%3)+1))
 sed -i "s/raspberrypi/node$x/g" /etc/hostname
 sed -i "s/raspberrypi/node$x/g" /etc/hosts
 
-nmcli con add con-name C2 type wifi ssid C2 ifname wlan0 ip4 192.168.1.$x/24 gw 192.168.1.10 ipv4.dns "4.2.2.2,8.8.8.8"
+nmcli con add con-name C2 type wifi ssid C2 ifname wlan0 ip4 192.168.1.$x/24 gw4 192.168.1.10 ipv4.dns "4.2.2.2,8.8.8.8"
 nmcli device set wlan0 autoconnect yes

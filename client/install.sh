@@ -2,7 +2,8 @@
 ntpdate time.nist.gov
 apt-get install git tshark iftop wavemon screen jq curl firmware-realtek firmware-misc-nonfree aircrack-ng ntpdate mariadb-client python3-mysqldb xxd bc
 echo NTP=192.168.1.10 >> /etc/systemd/timesyncd.conf
-
+touch .env
+touch ../.env
 
 #startup scripts
 systemctl disable hciuart.service 

@@ -40,7 +40,7 @@ else
 echo Broadcast Detected ${arr[1]} time is ${arr[2]} ${arr[3]} seq is ${arr[5]}
 fi
 
-mysql -u pi -h 192.168.1.1 probeprint <<< "INSERT ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht) values (\"${arr[0]}\",\"${arr[1]}\",\"${arr[2]}\",\"${arr[3]}\",\"${arr[4]}\",\"${arr[5]}\",\"${arr[6]}\");"
+mysql -u pi -h 192.168.1.10 probeprint <<< "INSERT ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht) values (\"${arr[0]}\",\"${arr[1]}\",\"${arr[2]}\",\"${arr[3]}\",\"${arr[4]}\",\"${arr[5]}\",\"${arr[6]}\");"
 
 #sleep 3
 done < pipe_$INF

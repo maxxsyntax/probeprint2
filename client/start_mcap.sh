@@ -23,10 +23,14 @@ for interface in $interfaces; do
 #y(n)={start(n),start(n)+1,start(n)+2,start(n)+3}
 channel=`echo $((4*$((${hostname:0-1}-1))+$y))`
 intmon=$(iw dev $interface info | grep -B4 monitor | grep Interface | cut -d\  -f2)
+
+if [[ -n $intmon ]]
+then
 ip link set $intmon up
 iwconfig $intmon channel $channel 
 #/usr/bin/screen -d -m -S $intmon /usr/sbin/airodump-ng -c $channel $intmon
 /usr/bin/screen -d -m -S "$intmon"_db ./build_ssid.sh $intmon
 ((y++))
+fi
 done
 

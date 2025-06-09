@@ -32,7 +32,6 @@ A real time application of intelligence gained from passively monitoring wireles
 - Wigle API key
 - GNU bash, version 5.2.15 
 - tshark
-- sqlite3
 - mysql/mariadb
 
 

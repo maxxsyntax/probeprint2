@@ -39,7 +39,7 @@ do
 	name=$(echo $name_hex | xxd -r -p)
 	mysql probeprint <<< "update ssid_intel set is_name=\"$name\" where (ssid_hex like \"$name_hex%\" or ssid_hex like \"%$name_hex%\" or ssid_hex like \"%$name_hex\") and is_name is null;"
 done < lists/names_hex.txt
-mysql probeprint <<< "update ssid_intel set category=\"NAME_VAGUE\" where is_name!=0 and is_name is not null;"
+mysql probeprint <<< "update ssid_intel set category=\"NAME\" where is_name!=0 and is_name is not null;"
 mysql probeprint <<< "update ssid_intel set is_name=0 where is_name is null;"
 echo check_name stop $(date +"%H:%M:%S.%3N")
 }

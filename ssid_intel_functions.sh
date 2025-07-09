@@ -14,14 +14,14 @@ categories["CULTURE_RELIGION"]="Jesus"
 #customize industry specific in .env file
 #categories["INDUSTRY_EVENT"]="attendees"
 #categories["INDUSTRY_PERSON"]="N1MJF"
-#categories["NAME_VAGUE"]="Family;'s;familia"
+#categories["NAME"]="Family;'s;familia"
 categories["OTHER_CREATIVE"]="tubez;nacho"
 categories["TECH_CPE"]="TeleCable;Hyperoptic;ARRIS;aWiFi;_extender;MOVISTAR;Bbox_;BELL;BSNL;BTHub;Buffalo;TurkNet;CBCI;CenturyLink;ChinaNet;Claro;CLARO;Direct_;FASTWEB;Fibertel;Fios;Franklin;T10;Freebox_;FREEBOX_;Frontier;Google;H3C_;HOME_;KT_GiGA;LIB_;lib_;Livebox_Hex;MEO_Hex;MiFibra_Hex;MIFI;MOTO;MyAltice;MySpectrum;NET_;NETGEAR;Nokia_;Starlink;ORBI;Zyxel_;Ziggo;WLAN_;Vodafone;Verizion;TP_Link_;TELUS;SpectrumSetup;SINGTEL;SETUP_;Redmi;2WIRE;Linksys;CoxWiFi;attwifi;livebox;tigo;MEGACABLE;TP-Link;eduroam;CDMX-Internet;ATTfiber;MIWIFI;LIB-;Telekom-;ATT;skyfi;NextGenTel;FRITZ!Box;ubnt;Freebox;Xfinity;Tienda;LinkNYC;5099251212;Proximus"
 categories["TECH_OTHER"]="ASUS;Apple;WebOS;ZHIYUN;Sonos_"
 categories["TECH_PHONE"]="AndroidAP;Pixel;Galaxy;Huawei;iPad;LGWiFi;nova;POCO;X3;Samsung;tmobile;TMOBILE;TMobile;Xiaom;Verizon;telefono;phone"
 categories["TECH_PRINTER"]="Canon_;DIRECT_;HP_Print_;HP-Setup"
 categories["TRAVEL"]="Lounge;AERO;AIRPORT;United;Lounge;Airlines;Amtrak;Delta;Boingo;GoGo;_Free;Fly;SouthwestWiFi;Terminal;aainflight.com;SANfreewifi;trein;aa-guest"
-categories["LOCATION_VAGUE"]="Marina;beach;Harbor;Apartment;FLAT;Lobby;cdmx;river;Tour_Eiffel;stadium;Athens"
+categories["LOCATION"]="Marina;beach;Harbor;Apartment;FLAT;Lobby;cdmx;river;Tour_Eiffel;stadium;Athens"
 #customize in .env file
 #categories["INDUSTRY_VIP"]="XXX"
 categories["CULTURE_LUXURY"]="Estates;lux;yatch;social;marina;penthouse;jetex;ginza"
@@ -157,7 +157,7 @@ do
 	#echo $name_hex
 	mysql probeprint <<< "update ssid_intel set is_name=\"$line\" where (ssid_hex like \"$name_hex%\" or ssid_hex like \"%$name_hex%\") or (ssid_hex like \"$name_hex_lower%\" or ssid_hex like \"%$name_hex_lower%\") or (ssid_hex like \"$name_hex_upper%\" or ssid_hex like \"%$name_hex_upper%\") and is_name is null;"
 done < lists/names.txt
-mysql probeprint <<< "update ssid_intel set category=\"NAME_VAGUE\" where is_name!=0 and is_name is not null;"
+mysql probeprint <<< "update ssid_intel set category=\"NAME\" where is_name!=0 and is_name is not null;"
 mysql probeprint <<< "update ssid_intel set is_name=0 where is_name is null;"
 echo check_name stop $(date +"%H:%M:%S.%3N")
 sleep 10
@@ -338,7 +338,7 @@ score=1
 LOCATION_SPECIFIC)
 score=2
 ;;
-LOCATION_VAGUE)
+LOCATION)
 score=1
 ;;
 BIZ_HOTEL)
@@ -362,7 +362,7 @@ score=2
 BIZ_CLUB)
 score=2
 ;;
-NAME_VAGUE)
+NAME)
 score=1
 ;;
 NAME_SPECIFIC)

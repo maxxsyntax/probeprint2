@@ -13,7 +13,7 @@ categories["CULTURE_RELIGION"]="Jesus"
 #customize industry specific in .env file
 #categories["INDUSTRY_EVENT"]="attendees"
 #categories["INDUSTRY_PERSON"]="N1MJF"
-#categories["NAME_VAGUE"]="Family;'s;familia"
+#categories["NAME"]="Family;'s;familia"
 categories["OTHER_CREATIVE"]="tubez;nacho"
 categories["TECH_CPE"]="TeleCable;Hyperoptic;ARRIS;aWiFi;_extender;MOVISTAR;Bbox_;BELL;BSNL;BTHub;Buffalo;TurkNet;CBCI;CenturyLink;ChinaNet;Claro;CLARO;Direct_;FASTWEB;Fibertel;Fios;Franklin;T10;Freebox_;FREEBOX_;Frontier;Google;H3C_;HOME_;KT_GiGA;LIB_;lib_;Livebox_Hex;MEO_Hex;MiFibra_Hex;MIFI;MOTO;MyAltice;MySpectrum;NET_;NETGEAR;Nokia_;Starlink;ORBI;Zyxel_;Ziggo;WLAN_;Vodafone;Verizion;TP_Link_;TELUS;SpectrumSetup;SINGTEL;SETUP_;Redmi;2WIRE;Linksys;CoxWiFi;attwifi;livebox;tigo;MEGACABLE;TP-Link;eduroam;CDMX-Internet;ATTfiber;MIWIFI;LIB-;Telekom-;ATT;skyfi;NextGenTel;FRITZ!Box;ubnt;Freebox;Xfinity;Tienda;LinkNYC;5099251212;Proximus"
 categories["TECH_OTHER"]="ASUS;Apple;WebOS;ZHIYUN;Sonos_"

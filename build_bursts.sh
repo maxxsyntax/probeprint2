@@ -1,5 +1,5 @@
 #!/bin/bash
-
+set -x
 
 source ./bursts_functions.sh
 

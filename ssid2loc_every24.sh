@@ -1,6 +1,6 @@
 #!/bin/bash
 source .env
-source ./ssid_intel_online_functions.sh
+source ./summarize_location.sh
 
 #set -x
 #need to fix null byte bug

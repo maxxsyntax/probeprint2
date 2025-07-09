@@ -13,12 +13,13 @@ trap 'kill $(jobs -p) 2>/dev/null' EXIT
 ###one offs add here and then remove
 #
 
-###dont require ssid
+###dont require input
 #check_airport
-#check_name
+#check_industry
+#check_name  # Bug ERROR 1292 (22007) at line 1: Truncated incorrect DECIMAL value: ''
 #check_anomalies
-#make_ignore_list
-#mac2vendor
+#make_ignore_list #borken, needed?
+mac2vendor
 #check_language
 #check_common
 
@@ -36,20 +37,19 @@ trap 'kill $(jobs -p) 2>/dev/null' EXIT
 
 
 
-#check_industry
-
 #check_address
-while true; do
-     ./standalone_ssid2ssid_intel.sh
-     ./standalone_address.sh
-     ./standalone_airport.sh
-     ./standalone_categorize.sh
-     ./standalone_check_industry
-     ./standalone_common.sh
-     ./standalone_name.sh
-     ./standalone_oneloc.sh
-     ./standalone_summarize_loc.sh
-     sleep 20
-done
+#continuous updating
+#while true; do
+#     ./standalone_ssid2ssid_intel.sh
+#     ./standalone_address.sh
+#     ./standalone_airport.sh
+#     ./standalone_categorize.sh
+#     ./standalone_check_industry
+#     ./standalone_common.sh
+#     ./standalone_name.sh
+#     ./standalone_oneloc.sh
+#     ./standalone_summarize_loc.sh
+#     sleep 20
+#done
 
-wait
+#wait

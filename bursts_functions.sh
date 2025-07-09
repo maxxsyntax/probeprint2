@@ -12,7 +12,7 @@ es=0
 #es exit status and until loop to iterate through all unprocessed lines
 until [[ $es -ne 0 ]]; do
 #select unprocessed row
-row=$(mysql -N probeprint <<< "select ssid_hex,wlan_sa,time from ssid where is_processed=0 order by time limit 1;")
+row=$(mysql -N probeprint <<< "select ssid_hex,wlan_sa,time from ssid where is_processed=0 wlan_sa is not null order by time limit 1;")
 es=$?
 arr=($row)
 if [[ -z ${arr} ]]

@@ -59,7 +59,7 @@ ssid2loc (){
 if [ ! -f locs/"$ssid_hex".location ]
 then
 	echo running curl
-curl -s -H 'Accept:application/json' -u $APIKEY --basic https://api.wigle.net/api/v2/network/search?ssid="$ssid_uri" -o locs/"$ssid_hex".location    
+curl  -H 'Accept:application/json' -u $APIKEY --basic https://api.wigle.net/api/v2/network/search?ssid="$ssid_uri" -o locs/"$ssid_hex".location    
 sleep 2
 fi
 grep -q oo\ many locs/"$ssid_hex".location 

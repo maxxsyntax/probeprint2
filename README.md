@@ -11,26 +11,21 @@ Insecure wireless settings can leak information such as names, travel patterns, 
 
 A real time application of intelligence gained from passively monitoring wireless transmissions from common mobile devices.  An unobtrusive method of collecting and displaying this information.  New acquaintances can be vetted instantly by confirming who they say they are matches the information coming from their devices.  Findings from analyzing large data sets will be presented, demonstrating that this method can be applied to enumerate potential threat actors within a given proximity. 
 
+![image](https://github.com/user-attachments/assets/6464cccc-3178-4bb8-81f6-cd7d17a71772)
 
 
-![diagram](https://github.com/maxxsyntax/probeprint/assets/145410040/e39e1497-a7fa-40f6-b940-123169f70eae)
 
 
 
 ## Prerequisites
 
-- bettercap
 - curl
 - aircrack-ng (suite)
 - tcpdump
 - jq
-- python
-- geopy.geocoders import Nominatim
 - bash
 - screen
-- tmux
 - Wigle API key
-- GNU bash, version 5.2.15 
 - tshark
 - mysql/mariadb
 
@@ -45,7 +40,7 @@ run build_ssid.sh
 
 
 ## Assumptions
-Randomized Mac does not coincide with a known Vendor OUI
+Randomized MAC does not coincide with a known Vendor OUI
 
 ~~BLE MAC's are not randomized~~
 

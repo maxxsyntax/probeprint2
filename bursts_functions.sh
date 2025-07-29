@@ -12,7 +12,7 @@ es=0
 #es exit status and until loop to iterate through all unprocessed lines
 until [[ $es -ne 0 ]]; do
 #select unprocessed row
-row=$(mysql -N probeprint <<< "select ssid_hex,wlan_sa,time from ssid where is_processed=0 wlan_sa is not null order by time limit 1;")
+row=$(mysql -N probeprint <<< "select ssid_hex,wlan_sa,time from ssid where is_processed=0 wlan_sa is not null and time != \"\" order by time limit 1;")
 es=$?
 arr=($row)
 if [[ -z ${arr} ]]
@@ -58,7 +58,7 @@ mysql -N probeprint <<< "update ssid set is_processed=100 where wlan_sa = \"$wla
 fi
 final_time=$time2
 #query for 1 second in the future and iterate through probes to find match ## sqlite3 reverses < and > because numbers are negatives, treats them as positive
-done <<<$(mysql -N probeprint <<< "SELECT ssid_hex,wlan_sa,time from ssid where time < \"$endtime\" and time > \"$begintime\" and wlan_sa=\"$wlan_sa\" order by time;")
+done <<<$(mysql -N probeprint <<< "SELECT ssid_hex,wlan_sa,time from ssid where time < \"$endtime\" and time > \"$begintime\" and wlan_sa=\"$wlan_sa\" and  time != \"\" order by time;")
 
 #mark partent probe as processed
 mysql probeprint <<< "update ssid set is_processed=1 where wlan_sa = \"$wlan_sa\" and time = \"$time\";"
@@ -123,7 +123,7 @@ echo ssid_2bursts-seq start $(date +"%H:%M:%S.%3N")
 #pull unproccessed SSID and break into array
 es=0
 until [[ $es -ne 0 ]]; do
-row=$(mysql -N probeprint <<< "select ssid_hex,wlan_sa,time,seq,rssi from ssid where is_processed=1 and seq!=null order by time limit 1;")
+row=$(mysql -N probeprint <<< "select ssid_hex,wlan_sa,time,seq,rssi from ssid where is_processed=1 and seq!=null and  time != \"\" order by time limit 1;")
 es=$?
 arr=($row)
 if [[ -z ${arr} ]]
@@ -175,7 +175,7 @@ final_time=$time2
 #echo will run  "update ssid set is_processed=2 where wlan_sa = \"$wlan_sa\" and time = \"$time\";"
 mysql probeprint <<< "update ssid set is_processed=2 where wlan_sa = \"$wlan_sa\" and time = \"$time\";"
 
-done <<<$(mysql -N probeprint <<< "SELECT ssid_hex,wlan_sa,time from ssid where time < \"$endtime\" and time > \"$begintime\" and seq >= \"$seq\" and seq <= \"$seq_end\" and rssi <= \"$rssi_max\" and rssi >= \"$rssi_min\" order by time;")
+done <<<$(mysql -N probeprint <<< "SELECT ssid_hex,wlan_sa,time from ssid where time < \"$endtime\" and time > \"$begintime\" and seq >= \"$seq\" and seq <= \"$seq_end\" and rssi <= \"$rssi_max\" and rssi >= \"$rssi_min\" and time != \"\" order by time;")
 
 bcount=${#burst[@]}
 if [[ $bcount -gt "1" ]]
@@ -231,7 +231,7 @@ ssid2bursts-vht () {
 #pull unproccessed SSID and break into array
 es=0
 until [[ $es -ne 0 ]]; do
-row=$(mysql -N probeprint <<< "select ssid_hex,wlan_sa,time,vht,rssi from ssid where is_processed=2 order by time limit 1;")
+row=$(mysql -N probeprint <<< "select ssid_hex,wlan_sa,time,vht,rssi from ssid where is_processed=2 and time != \"\" order by time limit 1;")
 es=$?
 arr=($row)
 if [[ -z ${arr} ]]
@@ -281,7 +281,7 @@ final_time=$time2
 #echo will run  "update ssid set is_processed=2 where wlan_sa = \"$wlan_sa\" and time = \"$time\";"
 mysql probeprint <<< "update ssid set is_processed=3 where wlan_sa = \"$wlan_sa\" and time = \"$time\";"
 
-done <<<$(mysql -N probeprint <<< "SELECT ssid_hex,wlan_sa,time from ssid where time < \"$endtime\" and time > \"$begintime\" and vht = \"$vht\" and rssi <= \"$rssi_max\" and rssi >= \"$rssi_min\" order by time;")
+done <<<$(mysql -N probeprint <<< "SELECT ssid_hex,wlan_sa,time from ssid where time < \"$endtime\" and time > \"$begintime\" and vht = \"$vht\" and rssi <= \"$rssi_max\" and rssi >= \"$rssi_min\" and time != \"\" order by time;")
 
 bcount=${#burst[@]}
 if [[ $bcount -gt "1" ]]
@@ -405,7 +405,7 @@ IFS=:;
 ###set related_burst to ignore for bursts of non-unique common ssids
 ###
 #select unprocessed rowid and break into array
-ssids=($(mysql -N probeprint <<< "select time,ssids from bursts where burst_duration != 0 and burst_size > 1 and related_burst = 0 and is_uniq=1 limit 1;")); 
+ssids=($(mysql -N probeprint <<< "select time,ssids from bursts where burst_duration != 0 and burst_size > 1 and related_burst = 0 and is_uniq=1 and time != \"\" limit 1;")); 
 echo ${ssids[*]}
 #check for value
 if [[ -z ${ssids} ]]

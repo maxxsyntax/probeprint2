@@ -1,0 +1,13 @@
+.env
+new.db
+locs/*
+bt/*
+*db
+*locations
+*-wal
+*-shm
+wigle.csv
+pipe
+industry.txt
+ignore.txt
+notes.txt

@@ -64,7 +64,7 @@ sudo systemctl unmask hostapd
 sudo systemctl enable hostapd
 sudo systemctl start hostapd
 
-add folloing to boot/config.txt
+add following to boot/config.txt
 dtoverlay=disable-bt
 
 Configure hosapd.conf 

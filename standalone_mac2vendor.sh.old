@@ -1,0 +1,24 @@
+mac2vendor () {
+
+arr=()
+IFS=\|
+while read line; do 
+arr=($line)     
+oui=$(echo "${arr[0]}" |tr -d \: | cut -b1-6)
+
+#echo $line
+vendor=$(grep -i $oui lists/oui.csv | cut -d, -f3,4 | cut -b 1-20 | tr -d \")
+if [[  -n $vendor ]]
+then
+#echo ${arr[0]} $vendor ${arr[1]}
+#update prints with vendor type
+mysql probeprint <<< "update ssid set vendor=\"$vendor\" where ssid_hex=\"${arr[1]}\" and wlan_sa=\"${arr[0]}\"; "
+else
+        mysql probeprint <<< "update ssid set vendor=\".\" where ssid_hex=\"${arr[1]}\" and wlan_sa=\"${arr[0]}\"; "
+
+fi
+#select SSIDS with only 1 mac address associated.  The idea being, a mac will randomize and then probe for the same ssid; thus 2+ wlan_sa per ssid.  This will leave some false negatives but will tune out the majority of dynamic mac addresses (which would have no vendor)
+#needs to account for ssid's already analyzed
+done <<< $(mysql probeprint <<< "select wlan_sa,ssid_hex from ssid where vendor is null group by ssid_hex HAVING count(DISTINCT wlan_sa) =1;")
+}
+mac2vendor

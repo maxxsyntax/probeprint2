@@ -138,6 +138,80 @@ component ids to `ssid.device_id`. Defaults: `SEQGRAPH_ALPHA=90` seconds (Cunche
 measured 50–60s between bursts from one device), `SEQGRAPH_BETA=400`. Both
 tunable from `.env`.
 
+### Identity, and why the alias is not the identity
+
+`devices.id` is an autoincrement surrogate key. `devices.device_key` is derived
+from the component's **earliest observation** — `substr(md5(anchor_time),1,16)`
+— which makes it merge-stable: when two components join, the merged component's
+earliest frame belongs to whichever started first, so that key survives and the
+other is absorbed. Two analysts recomputing independently get the same keys.
+
+An earlier scheme used the per-run array index (`dev-%06d`). It was not stable:
+incremental runs restarted the index at zero and reissued ids already in use, so
+unrelated devices shared one. Reproduced and fixed.
+
+`devices.alias` is an adjective-noun handle from `lists/adjectives.txt` ×
+`lists/nouns.txt` (347 × 282 = 97,854 combinations; 50% chance of a duplicate at
+368 devices, handled with a numeric discriminator). It exists because an
+operator in a room can hold "Brave Falcon" in their head and cannot hold
+`device 4127`. It is a **non-key attribute** and nothing joins on it.
+
+Two deliberate choices. The name is derived from `device_key`, so a recompute
+never renames a device — a memorable name that silently changes is worse than a
+number, because it manufactures false confidence in continuity. And the name is
+**stored, not recomputed on read**, so two devices can never display the same
+handle.
+
+An earlier idea was to source the noun from the device *class* so that same-model
+devices shared a noun. Dropped: `ie_fp` says two devices are the same class, not
+*which* class, and there is no public corpus mapping 802.11 probe IE signatures
+to models. Naming a slot after something unresolvable makes the name arbitrary
+while implying it is not. Vendor — which *is* partially resolvable, from a
+non-randomised MAC OUI or the IE 221 vendor OUI — is shown as its own field.
+
+### Burst-derived features: weak as identity, useful as a gate
+
+Pintor 2022 §V.C computed exactly the burst-level features that look promising —
+"the number of packets sent in a burst, the difference between the
+first-intra-burst sequence number and the last one, and other characteristics" —
+and clustering on them was **worse** than per-frame. So burst structure is not
+built here as a competing identity signal. Two better uses:
+
+- **Gate the graph's edges.** `SEQGRAPH_GATE_IE=1` refuses an edge between two
+  frames whose IE fingerprints positively disagree, since one device cannot
+  change its signature mid-capture. This converts the confidence flag from
+  after-the-fact detection into prevention. Measured on the test fixtures: two
+  interleaved real devices merge without it and stay separate with it.
+- **Behavioural state.** The intra-burst sequence delta is a clean
+  associated/unassociated discriminator — if N probes advance the counter by
+  exactly N−1 the device is sending nothing else. Combined with Pintor's finding
+  that probe rate tracks screen state, that is an attention signal, orthogonal
+  to identity.
+
+Not yet done: burst detection itself is still a fixed one-second window from an
+arbitrary anchor frame, which splits bursts straddling the boundary and merges
+adjacent ones. `burst_size` and `burst_duration` are therefore partly artifacts
+of the window. Gap-based detection would fix it, and should land before either
+is trusted as a feature.
+
+### Static MACs are free ground truth
+
+The minority of devices that do not randomise are the most useful thing in a
+capture, and not as a fingerprint. For them the MAC *is* the identity, with no
+inference, which makes them labelled data present in every real capture:
+
+- two globally-unique MACs in one cluster → **provable false merge**
+- one globally-unique MAC across two clusters → **provable false split**
+
+`seqgraph_validate` (`standalone_seqgraph.sh --validate`) scores the clustering
+against them and prints both rates plus the offending MACs. That is a measured
+error rate at the current α/β in the real environment, rather than a number from
+a synthetic fixture, and it is the right way to tune α and β per site.
+
+Randomised addresses are the locally-administered ones — bit 1 of the first
+octet set, bit 0 clear for a unicast source — so the second hex digit is one of
+`2`, `6`, `a`, `e`. This is Cheshire's shortcut.
+
 ### Its real failure mode
 
 The test fixtures surfaced this by accident and it is worth recording. Given 19
@@ -199,8 +273,11 @@ devices.
 
 Roughly in descending order of value for this engagement:
 
-1. **Psim-3 PNL linkage** (Cunche 2012) — links *people*, not devices. All
-   inputs now exist. This is the highest-value remaining gap.
+1. **Psim-3 PNL linkage** (Cunche 2012) — links *people*, not devices. Every
+   input now exists as a table: `device_ssid` holds each device's list and
+   `ssid_intel.rarity` holds the per-SSID weight, so the metric is a join away:
+   `Psim-3(X,Y) = Σ 1/f(z)³` over the SSIDs two devices share. This is the
+   highest-value remaining gap.
 2. **Wi-Fi ↔ Bluetooth correlation** — the stated goal in `../idea.txt`, still
    entirely unimplemented. Correlate by co-presence window, RSSI correlation and
    joint appear/disappear. BLE frequently carries a real human name where Wi-Fi

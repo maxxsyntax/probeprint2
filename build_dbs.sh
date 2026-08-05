@@ -35,11 +35,98 @@ mysql probeprint -e "alter table ssid add column if not exists ie_order varchar(
 mysql probeprint -e "alter table ssid add column if not exists ie_fp char(32) as (md5(concat_ws('|',coalesce(ht,''),coalesce(extcap,''),coalesce(vendor_oui,''),coalesce(ie_order,'')))) persistent;"
 mysql probeprint -e "create index if not exists idx_ssid_ie_fp on ssid (ie_fp);"
 
-# Device identity assigned by the sequence-number graph (seqgraph_functions.sh),
-# which chains probe requests across MAC randomisation.
-mysql probeprint -e "alter table ssid add column if not exists device_id varchar(32) default null;"
+# ---------------------------------------------------------------------------
+# Device identity.
+#
+# Two different fingerprints, doing different jobs:
+#
+#   ssid.ie_fp    device *class* -- model and OS build. A pure hash of the IE
+#                 bytes, so it is deterministic and stable, but many physical
+#                 devices share one value. It is never an individual.
+#
+#   devices.id    device *instance* -- one row per physical device, as inferred
+#                 by the sequence-number graph. Provisional by nature: clusters
+#                 merge as bridging frames arrive.
+#
+# devices.id is a surrogate autoincrement key so it is never reused and never
+# renumbered. device_key is the content-derived natural key, computed from the
+# component's earliest observation, which makes it merge-stable: when two
+# components join, the merged component's earliest frame is whichever component
+# started first, so that component's key survives.
+# ---------------------------------------------------------------------------
+mysql probeprint -e "create table if not exists devices (
+  id              int auto_increment primary key,
+  device_key      char(16)    not null,
+  alias           varchar(64) default null,
+  first_seen      varchar(22) default null,
+  last_seen       varchar(22) default null,
+  frame_count     int         default 0,
+  mac_count       int         default 0,
+  ssid_count      int         default 0,
+  ie_fp_distinct  int         default 0,
+  vendor          varchar(64) default null,
+  confidence      varchar(8)  default null,
+  unique key uniq_device_key (device_key),
+  unique key uniq_alias (alias)
+);"
+
+# ---------------------------------------------------------------------------
+# The preferred network list: which SSIDs each device has been seen probing for.
+#
+# This is the point of the whole pipeline. A device fingerprint on its own says
+# "this is one device"; the SSID list attached to it says *whose* device it is.
+# Cunche et al. measured preferred network lists at an average of 5.34 SSIDs and
+# found each one close to unique, because most SSIDs are probed by exactly one
+# device. It is also the substrate for linking two devices -- and therefore two
+# people -- by the rarity of the SSIDs they share.
+#
+# Materialised rather than derived on demand: it is read constantly by the
+# display and will be read pairwise by any future linkage pass, where a
+# group-by over the whole ssid table per comparison would be hopeless.
+# ---------------------------------------------------------------------------
+mysql probeprint -e "create table if not exists device_ssid (
+  device_id   int          not null,
+  ssid_hex    varchar(200) not null,
+  frame_count int          default 0,
+  first_seen  varchar(22)  default null,
+  last_seen   varchar(22)  default null,
+  primary key (device_id, ssid_hex),
+  key idx_device_ssid_ssid (ssid_hex)
+);"
+
+# pnl_size  -- how many distinct networks this device asks for.
+# pnl_rarity-- summed rarity of them, i.e. how identifying the list is as a
+#              whole. A device probing only 'xfinitywifi' scores near zero and
+#              is effectively anonymous; one probing three household SSIDs
+#              scores high and is close to uniquely identifiable.
+mysql probeprint -e "alter table devices add column if not exists pnl_size int default 0;"
+mysql probeprint -e "alter table devices add column if not exists pnl_rarity double default null;"
+
+# Staging table for the graph's output, joined back to assign ids in bulk.
+mysql probeprint -e "create table if not exists device_stage (
+  time       varchar(22) primary key,
+  device_key char(16) not null,
+  key idx_stage_key (device_key)
+);"
+
+mysql probeprint -e "alter table ssid add column if not exists device_id int default null;"
 mysql probeprint -e "create index if not exists idx_ssid_device_id on ssid (device_id);"
 mysql probeprint -e "create index if not exists idx_ssid_seq_time on ssid (seq, time);"
+
+# Migration: device_id shipped briefly as varchar(32) holding ids of the form
+# dev-000000, generated from a per-run array index. Those were not stable --
+# incremental runs restarted the index at zero and reissued ids already in use,
+# so unrelated devices ended up sharing one. The values are provably wrong, so
+# they are cleared rather than converted; re-run standalone_seqgraph.sh to
+# regenerate against the current scheme.
+device_id_type=$(mysql -N probeprint -e "select data_type from information_schema.columns where table_schema='probeprint' and table_name='ssid' and column_name='device_id';")
+if [ "$device_id_type" = "varchar" ]; then
+	echo "MIGRATION: ssid.device_id was varchar (the unstable dev-NNNNNN scheme)."
+	echo "           Those ids collided across incremental runs, so they are being"
+	echo "           cleared. Re-run ./standalone_seqgraph.sh to regenerate."
+	mysql probeprint -e "update ssid set device_id = null;"
+	mysql probeprint -e "alter table ssid modify column device_id int default null;"
+fi
 
 # ---------------------------------------------------------------------------
 # SSID rarity.

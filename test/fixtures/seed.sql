@@ -84,17 +84,17 @@ insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
 -- +60 window, RSSI within +/-2. Exercises ssid2bursts-seq, which never ran
 -- before `seq!=null` was fixed, and the rssi varchar comparison.
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  (lower(hex('SeqBurstOne')),   '0b:00:00:00:00:01', '1700000300.100000', '-60', 2437, 500, '0x03fbfa00'),
-  (lower(hex('SeqBurstTwo')),   '0b:00:00:00:00:02', '1700000300.200000', '-61', 2437, 510, '0x03fbfa00'),
-  (lower(hex('SeqBurstThree')), '0b:00:00:00:00:03', '1700000300.300000', '-59', 2437, 520, '0x03fbfa00');
+  (lower(hex('SeqBurstOne')),   '62:00:00:00:00:01', '1700000300.100000', '-60', 2437, 500, '0x03fbfa00'),
+  (lower(hex('SeqBurstTwo')),   '66:00:00:00:00:02', '1700000300.200000', '-61', 2437, 510, '0x03fbfa00'),
+  (lower(hex('SeqBurstThree')), '6a:00:00:00:00:03', '1700000300.300000', '-59', 2437, 520, '0x03fbfa00');
 
 -- Burst by vht: distinct MACs sharing one VHT capability value and RSSI band.
 -- The sequence numbers are deliberately more than 60 apart so the seq pass
 -- cannot claim these rows first -- it would mark them is_processed=100 and the
 -- vht pass (which selects is_processed=2) would never see them.
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  (lower(hex('VhtBurstOne')), '0c:00:00:00:00:01', '1700000400.100000', '-70', 2437, 900, '0xdeadbeef'),
-  (lower(hex('VhtBurstTwo')), '0c:00:00:00:00:02', '1700000400.200000', '-71', 2437, 1500, '0xdeadbeef');
+  (lower(hex('VhtBurstOne')), '72:00:00:00:00:01', '1700000400.100000', '-70', 2437, 900, '0xdeadbeef'),
+  (lower(hex('VhtBurstTwo')), '76:00:00:00:00:02', '1700000400.200000', '-71', 2437, 1500, '0xdeadbeef');
 
 -- A wildcard/broadcast probe, stored with the <MISSING> sentinel exactly as
 -- tshark reports it. Downstream queries filter on this literal string, so the
@@ -111,17 +111,24 @@ insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
 -- through all of them. The graph must join all eight frames into ONE device_id
 -- spanning three MACs -- the old ssid2bursts-seq could never do this, because
 -- its window was a single second.
-insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  (lower(hex('RoamHome')),  '0d:00:00:00:00:01', '1700001000.000000', '-55', 2437, 1000, '0x03fbfa00'),
-  (lower(hex('RoamCafe')),  '0d:00:00:00:00:01', '1700001000.100000', '-55', 2437, 1001, '0x03fbfa00'),
-  (lower(hex('RoamWork')),  '0d:00:00:00:00:01', '1700001000.200000', '-55', 2437, 1002, '0x03fbfa00'),
+--
+-- The addresses are locally administered (second hex digit 2, 6, a) as a real
+-- randomising device's would be. That matters: seqgraph_validate treats
+-- globally-unique MACs as ground truth, so using them here would make this
+-- fixture look like three separate real devices wrongly merged.
+-- All eight frames carry an identical IE signature, as one physical device
+-- must: that is what lets the confidence check certify the merge as genuine.
+insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht, ht, extcap, vendor_oui, ie_order) values
+  (lower(hex('RoamHome')),  '12:00:00:00:00:01', '1700001000.000000', '-55', 2437, 1000, '0x03fbfa00', '0x09ef', '0x04,0x00', '6130', '0,1,45,127,191,221'),
+  (lower(hex('RoamCafe')),  '12:00:00:00:00:01', '1700001000.100000', '-55', 2437, 1001, '0x03fbfa00', '0x09ef', '0x04,0x00', '6130', '0,1,45,127,191,221'),
+  (lower(hex('RoamWork')),  '12:00:00:00:00:01', '1700001000.200000', '-55', 2437, 1002, '0x03fbfa00', '0x09ef', '0x04,0x00', '6130', '0,1,45,127,191,221'),
   -- MAC rotation #1, 50s later, sequence continues
-  (lower(hex('RoamHome')),  '0d:00:00:00:00:02', '1700001050.000000', '-56', 2437, 1060, '0x03fbfa00'),
-  (lower(hex('RoamCafe')),  '0d:00:00:00:00:02', '1700001050.100000', '-56', 2437, 1061, '0x03fbfa00'),
-  (lower(hex('RoamWork')),  '0d:00:00:00:00:02', '1700001050.200000', '-56', 2437, 1062, '0x03fbfa00'),
+  (lower(hex('RoamHome')),  '36:00:00:00:00:02', '1700001050.000000', '-56', 2437, 1060, '0x03fbfa00', '0x09ef', '0x04,0x00', '6130', '0,1,45,127,191,221'),
+  (lower(hex('RoamCafe')),  '36:00:00:00:00:02', '1700001050.100000', '-56', 2437, 1061, '0x03fbfa00', '0x09ef', '0x04,0x00', '6130', '0,1,45,127,191,221'),
+  (lower(hex('RoamWork')),  '36:00:00:00:00:02', '1700001050.200000', '-56', 2437, 1062, '0x03fbfa00', '0x09ef', '0x04,0x00', '6130', '0,1,45,127,191,221'),
   -- MAC rotation #2, another 50s on
-  (lower(hex('RoamHome')),  '0d:00:00:00:00:03', '1700001100.000000', '-57', 2437, 1120, '0x03fbfa00'),
-  (lower(hex('RoamCafe')),  '0d:00:00:00:00:03', '1700001100.100000', '-57', 2437, 1121, '0x03fbfa00');
+  (lower(hex('RoamHome')),  '5a:00:00:00:00:03', '1700001100.000000', '-57', 2437, 1120, '0x03fbfa00', '0x09ef', '0x04,0x00', '6130', '0,1,45,127,191,221'),
+  (lower(hex('RoamCafe')),  '5a:00:00:00:00:03', '1700001100.100000', '-57', 2437, 1121, '0x03fbfa00', '0x09ef', '0x04,0x00', '6130', '0,1,45,127,191,221');
 
 -- A second, unrelated device. Far enough away in time (900s > alpha) that it
 -- must NOT be merged into the chain above, despite plausible sequence numbers.
@@ -129,9 +136,24 @@ insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
   (lower(hex('OtherPhone')), '0e:00:00:00:00:01', '1700002000.000000', '-60', 2437, 1200, '0x03fbfa00'),
   (lower(hex('OtherPhone')), '0e:00:00:00:00:01', '1700002000.100000', '-60', 2437, 1201, '0x03fbfa00');
 
+-- Two DIFFERENT physical devices, both with globally-unique (non-randomised)
+-- MACs, interleaved in time with consecutive sequence numbers. This is the
+-- algorithm's real-world false-merge mode: nothing in the timing or sequence
+-- data distinguishes them, so an ungated graph chains all four frames into one
+-- device. Because both MACs are globally unique, seqgraph_validate can prove
+-- the merge is wrong without any external ground truth.
+--
+-- Their IE fingerprints differ, which is physically necessary for two different
+-- devices, so SEQGRAPH_GATE_IE=1 blocks the bad edge and keeps them apart.
+insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht, ht, extcap, vendor_oui, ie_order) values
+  (lower(hex('GroundTruthA')), '00:11:22:00:00:01', '1700005000.000000', '-50', 2437, 100, '0x1', '0x09ef', '0x04', '6130',    '0,1,45,127,221'),
+  (lower(hex('GroundTruthB')), '00:33:44:00:00:01', '1700005000.050000', '-50', 2437, 102, '0x2', '0x1122', '0xff', '5271450', '0,1,45,127,191,221'),
+  (lower(hex('GroundTruthA')), '00:11:22:00:00:01', '1700005000.100000', '-50', 2437, 101, '0x1', '0x09ef', '0x04', '6130',    '0,1,45,127,221'),
+  (lower(hex('GroundTruthB')), '00:33:44:00:00:01', '1700005000.150000', '-50', 2437, 103, '0x2', '0x1122', '0xff', '5271450', '0,1,45,127,191,221');
+
 -- Sequence counter wrapping past its 12-bit maximum mid-chain: 4094 -> 2 is a
 -- forward distance of 4, not a backward jump of 4092.
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  (lower(hex('WrapNet')), '0f:00:00:00:00:01', '1700003000.000000', '-65', 2437, 4090, '0x03fbfa00'),
-  (lower(hex('WrapNet')), '0f:00:00:00:00:01', '1700003000.100000', '-65', 2437, 4094, '0x03fbfa00'),
-  (lower(hex('WrapNet')), '0f:00:00:00:00:02', '1700003000.200000', '-65', 2437,    2, '0x03fbfa00');
+  (lower(hex('WrapNet')), '82:00:00:00:00:01', '1700003000.000000', '-65', 2437, 4090, '0x03fbfa00'),
+  (lower(hex('WrapNet')), '82:00:00:00:00:01', '1700003000.100000', '-65', 2437, 4094, '0x03fbfa00'),
+  (lower(hex('WrapNet')), '86:00:00:00:00:02', '1700003000.200000', '-65', 2437,    2, '0x03fbfa00');

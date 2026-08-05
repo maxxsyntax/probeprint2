@@ -1,277 +1,153 @@
 #!/bin/bash
+# Operator display helpers.
+#
+# Ported from sqlite3 to MariaDB. This file previously queried ssid.db,
+# ssid_intel.db and bursts.db, which stopped existing when the pipeline moved to
+# MySQL -- it could not run at all. Everything now reads the `probeprint`
+# database, matching display.sh and the rest of the tree.
+#
+# Connection settings, overridable from .env so a display can run on a laptop
+# against the collection host.
+DISPLAY_DB_ARGS=${DISPLAY_DB_ARGS:-}
 
-display_last3s () {
-while true; do 
+dq () { mysql -N $DISPLAY_DB_ARGS probeprint "$@"; }
 
-#find new ssids in last 3 seconds
-
-x=1
-
-while read -r line; do 
-	rssi2=0
-	range=''
-IFS='|' read -r -a arr <<<"$line"
-ssid="$(echo -n ${arr[0]} | xxd -r -p)" 
-ssid_hex="${arr[0]}"
-wlan_sa=${arr[1]}
-rssi=${arr[2]}
-rssi2=$(echo ${arr[2]}| cut -d\, -f1)
-if [[ $rssi2 -gt -66 ]]
-then
-	if [[ $rssi2 -ne 0 ]]; then
-	range=near\ by 
-fi
-else 
-	if [[ $rssi2 -gt -82 ]]
-	then 
-	range=medium
-else 
-	range=far
-fi
-fi
-vendor=$(sqlite3 ssid.db "select distinct vendor from ssid where wlan_sa=\"$wlan_sa\" and vendor is not null;")
-if [[ -n $ssid ]]; then
-
-
-echo  -e Network: $ssid \\nProxity: $range $rssi2 \\nVendor: $vendor  | grep -v "Vendor: ." | egrep -v 'Vendor:$'
-fi
-sqlite3 ssid_intel.db ".mode line" ".headers on" "select category,location,is_name,is_airport,is_common,is_oneloc from ssid_intel where ssid_hex=\"$ssid_hex\";" | egrep -v '= 0' | egrep -v 'location = $'
-
-
-
-related_burst=$(sqlite3 bursts.db "select distinct related_burst from bursts where ssids like \"%:$ssid_hex:%\" or ssids like \":$ssid_hex%\" or ssids like \"%$ssid_hex:\";")
-
- #IFS=\:
-   while read a
-   do 
-   	if [[ -n $a ]]; then
-   		if [ "$a" != "$ssid_hex" ]; then
-   	echo
-   	echo  Related Network: $(echo -n $a | xxd -r -p)
-   fi
-fi
-   	sqlite3 ssid_intel.db ".mode line" ".headers on" "select category,location,is_name,is_airport,is_common,is_oneloc from ssid_intel where ssid_hex=\"$a\";" | egrep -v '= 0'
-   done  <<< $(sqlite3 bursts.db "select ssids from bursts where related_burst=\"$related_burst\";"| tr \: \\n  | sort -u)
-#tput cup 4 4
-#sqlite3 new.db "select * from ssid_intel where ssid_hex=\"$ssid_hex\"; "
-#sqlite3 new.db "select vendor from ssid where ssid_hex=\"$ssid_hex\"; "
-#((x++))
-ssid_hex=''
-done <<<$(sqlite3 ssid.db "select  ssid_hex,wlan_sa,rssi from ssid where time > $(date +%s --date=30000\ sec\ ago) group by ssid_hex order by rssi;")
-#display intel
-sleep 3
-#echo
-done
-
+# rssi_range <rssi>
+# Coarse proximity bucket.
+#
+# NOTE: fixed thresholds do not travel between sites. Cheshire et al. found
+# signal decay is not constant with distance once transmit power, obstructions
+# and atmospherics vary, and used a break in the RSSI *distribution* instead.
+# These constants are a stopgap; see FINGERPRINTING.md.
+rssi_range () {
+	local r=${1%%,*}                       # multi-antenna arrives as "-42,-45"
+	[ -z "$r" ] && { echo ""; return; }
+	if [ "$r" -gt -66 ] 2>/dev/null; then
+		[ "$r" -ne 0 ] && echo "near by"
+	elif [ "$r" -gt -82 ] 2>/dev/null; then
+		echo "medium range"
+	else
+		echo "far away"
+	fi
 }
 
+# device_banner <device_id>
+# One line identifying the device behind a probe: its friendly alias, how much
+# corroboration there is, and the vendor if resolvable.
+#
+# The alias is a display handle only -- devices.id is the identity. A device
+# flagged low confidence spans more than one IE signature, which one physical
+# device cannot do, so it is probably two devices merged in error.
+device_banner () {
+	local id=$1
+	[ -z "$id" ] || [ "$id" = "NULL" ] && return
 
-
-
-display_burstinfo3s () {
-	while true; do 
-
-	#When SSID is seen, match ssid to ssids of burst, pull related burst ssids, pull all info of all ssids from ssid_intel
-#Mark VIP as needed
-###
-
-
-while read -r ssid_hex; do
-	related_burst=$(sqlite3 bursts.db "select distinct related_burst from bursts where ssids like \"%:$ssid_hex:%\" or ssids like \":$ssid_hex%\" or ssids like \"%$ssid_hex:\";")
-    
-   IFS=\:
-   for a in $(sqlite3 bursts.db "select ssids from bursts where related_burst=\"$related_burst\";")
-   do 
-   	echo -n $a | xxd -r -p
-   	echo 
-   	sqlite3 ssid_intel.db $"select * from ssid_intel where ssid_hex=\"$a\";"
-   done
-
-
-
-
-done <<<$(sqlite3 ssid.db "select distinct ssid_hex from ssid where time > $(date +%s --date=3\ sec\ ago) group by ssid_hex order by rssi;")
-sleep 3
-done
+	dq <<SQL | while IFS=$'\t' read -r alias conf macs ssids vendor; do
+select ifnull(alias,concat('device ',id)),
+       ifnull(confidence,'unknown'),
+       mac_count, ssid_count, ifnull(vendor,'')
+  from devices where id = $id;
+SQL
+		printf 'Device: %s' "$alias"
+		[ -n "$vendor" ] && printf ' [%s]' "$vendor"
+		case "$conf" in
+			low)     printf '  (!! low confidence: %s IE signatures, likely two devices merged)' \
+			                "$(dq <<< "select ie_fp_distinct from devices where id = $id;")" ;;
+			high)    printf '  (confirmed across %s MACs)' "$macs" ;;
+			unknown) printf '  (unverified: no IE data)' ;;
+		esac
+		printf '\n'
+		[ "$macs" -gt 1 ] 2>/dev/null && printf '  randomisation defeated: %s addresses, %s networks\n' "$macs" "$ssids"
+	done
 }
 
+# display_recent [seconds]
+# Everything seen in the last N seconds, grouped by the device behind it.
+display_recent () {
+	local window=${1:-30}
+	local cutoff
+	cutoff=$(date +%s --date="$window sec ago")
 
-display_ssid () {
-while read -r line; do
-	#echo $line
+	while IFS='|' read -r device_id ssid_hex rssi; do
+		[ -z "$ssid_hex" ] && continue
 
-	rssi2=0
-	range=''
-IFS='|' read -r -a arr <<<"$line"
-ssid="$(echo -n ${arr[0]} | xxd -r -p)" 
-ssid_hex="${arr[0]}"
-wlan_sa=${arr[1]}
-rssi=${arr[2]}
-rssi2=$(echo ${arr[2]}| cut -d\, -f1)
+		local ssid range
+		ssid=$(printf '%s' "$ssid_hex" | xxd -r -p 2>/dev/null | tr -cd '[:print:]')
+		range=$(rssi_range "$rssi")
 
-vendor=$(sqlite3 ssid.db  "PRAGMA journal_mode=WAL;" "select distinct vendor from ssid where wlan_sa=\"$wlan_sa\" and vendor is not null;" | sed 's/wal//g')
+		device_banner "$device_id"
+		printf 'Network: %s\n' "$ssid"
+		[ -n "$range" ] && printf '  Proximity: %s (%s)\n' "$range" "${rssi%%,*}"
 
-if [[ -n $ssid ]]; then
-echo $ssid $rssi2 $vendor
-sleep .5
-fi
-
-
-
-#done <<<$(sqlite3 new.db "select distinct ssid_hex from ssid where time > $(date +%s --date=3\ sec\ ago) group by ssid_hex order by time;")
-
-
-done <<<$(sqlite3 ssid.db "PRAGMA journal_mode=WAL;" "select  ssid_hex,wlan_sa,rssi from ssid where time > $(date +%s --date=3\ sec\ ago) group by ssid_hex order by rssi;")
+		# Intel for this SSID. OTHER_UNKNOWN and the zero placeholders are noise
+		# on a live display, so they are filtered rather than printed.
+		dq <<SQL | while IFS=$'\t' read -r cat loc name airport rarity; do
+select ifnull(category,''), ifnull(location,''), ifnull(is_name,''),
+       ifnull(is_airport,''), ifnull(round(rarity,1),'')
+  from ssid_intel where ssid_hex = "$ssid_hex";
+SQL
+			[ -n "$cat" ] && [ "$cat" != "OTHER_UNKNOWN" ] && printf '  Category: %s\n' "$cat"
+			[ -n "$loc" ] && [ "$loc" != "0" ] && printf '  Location: %s\n' "$loc"
+			[ -n "$name" ] && [ "$name" != "0" ] && printf '  Name: %s\n' "$name"
+			[ -n "$airport" ] && [ "$airport" != "0" ] && printf '  Airport: %s\n' "$airport"
+			# High rarity means few other devices anywhere probe for this, which
+			# is what makes it useful for linking people.
+			[ -n "$rarity" ] && awk -v r="$rarity" 'BEGIN{exit !(r>12)}' \
+				&& printf '  Rare network (rarity %s)\n' "$rarity"
+		done
+		printf '\n'
+	done <<< "$(dq <<SQL
+select concat_ws('|', ifnull(device_id,''), ssid_hex, ifnull(rssi,''))
+  from ssid
+ where cast(time as decimal(20,7)) > $cutoff
+   and ssid_hex <> '<MISSING>'
+ group by device_id, ssid_hex
+ order by cast(rssi as signed) desc;
+SQL
+)"
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-displayburst_simple_vht () {
-
-time=$(date +%s)
-begintime=$( echo "scale=7; $time - .000001" | bc)
-row=$(sqlite3 ssid.db "select * from ssid ssid_hex not like '%000%' and ssid_hex not like '%fff%' and rssi is not null and vht is not null limit 1;")
-IFS=\|
-arr=($row)
-if [[ -z ${arr} ]]
-then 
-	echo ending vht
-sleep 5
-return
-fi
-ssid_hex=${arr[0]}
-wlan_sa=${arr[1]}
-time=${arr[2]}
-rssi=$(echo ${arr[3]} | cut -d, -f1)
-#echo $rssi
-vht=${arr[4]}
-end_time=`echo "scale=7;  $time + 1" | bc`
-#endtime=`echo $end_time | cut -d\. -f1`
-endtime=$end_time
-#time3=`echo $time | cut -d. -f1`
-#begintime=$time
-begintime=$( echo "scale=7; $time - .000001" | bc)
-((rssi_max=rssi+5))
-((rssi_min=rssi-5))
-while read line; 
-do
-#echo $line
-if [[ -z $line ]]
-then 
-sqlite3 ssid.db "update ssid set is_processed=2 where wlan_sa = \"$wlan_sa\" and time =\"$time\";"
-echo no other vhts found, breaking $vht $ssid_hex
-break
-fi
-IFS=\|
-arr2=($line)
-ssid_hex2=${arr2[0]}
-wlan_sa2=${arr2[1]}
-time2=${arr2[2]}
-rssi2=${arr2[3]}
-vht2=${arr2[4]}
-#append ssid of matching mac address to burst
-#unset IFS
-burst+=("$ssid_hex2")
-sqlite3 ssid.db "update ssid set is_processed=100 where wlan_sa = \"$wlan_sa2\" and time =\"$time2\";"
-final_time=$time2
-
-#query for 1 second in the future and iterate through probes to find match
-#sqlite3 messes up on greater/less than of negative numbers so operators are reversed
-done <<<$(sqlite3 ssid.db "SELECT ssid_hex,wlan_sa,time,rssi,vht from ssid where time < \"$endtime\" and time > \"$begintime\" and rssi > \"$rssi_max\" and rssi < \"$rssi_min\" and vht=\"$vht\";")
-bcount=${#burst[@]}
-newburst=$(echo ${burst[*]} | tr \  \:)
-bdur=$(echo "scale=7; $final_time - $time" | bc)
-if [[ $bcount -gt "1" ]]
-then
-echo ${#burst[@]}
-fi
+# display_devices
+# Roster of every device seen, worst-corroborated first so a bad merge is
+# visible rather than buried.
+display_devices () {
+	printf '%-26s %-11s %7s %5s %6s %-16s %s\n' \
+		"alias" "confidence" "frames" "macs" "ssids" "vendor" "last seen"
+	dq <<'SQL' | awk -F'\t' '{ printf "%-26s %-11s %7s %5s %6s %-16s %s\n", $1,$2,$3,$4,$5,$6,$7 }'
+select ifnull(alias, concat('device ', id)),
+       ifnull(confidence,'-'),
+       frame_count, mac_count, ssid_count,
+       ifnull(substr(vendor,1,16),'-'),
+       ifnull(from_unixtime(cast(last_seen as decimal(20,0))),'-')
+  from devices
+ order by (confidence = 'low') desc, mac_count desc, frame_count desc;
+SQL
 }
 
+# display_device <alias-or-id>
+# Everything known about one device, including its full preferred network list
+# ordered by rarity -- the rare entries are the ones that identify a person.
+display_device () {
+	local who=$1
+	local id
+	id=$(dq <<< "select id from devices where alias = \"$who\" or id = nullif('$who','') limit 1;")
+	if [ -z "$id" ]; then
+		echo "no such device: $who" >&2
+		return 1
+	fi
 
-row_1() {
-	
-x=0
-#date=$(date -d '08/09/2024 19:40:22' +"%s")
-#date=1720470846
-#date=$(date +"%s")
-date=$((($(date +%s)-5)))
-x=1
-
-while read -r line; do 
-	rssi2=0
-	range=''
-IFS='|' read -r -a arr <<<"$line"
-ssid="$(echo -n ${arr[0]} | xxd -r -p)" 
-ssid_hex="${arr[0]}"
-wlan_sa=${arr[1]}
-rssi=${arr[1]}
-rssi2=$(echo ${arr[1]}| cut -d\, -f1)
-if [[ $rssi2 -gt -66 ]]
-then
-	if [[ $rssi2 -ne 0 ]]; then
-	range=close 
-fi
-else 
-	if [[ $rssi2 -gt -82 ]]
-	then 
-	range=medium\ range
-else 
-	range=far
-fi
-fi
-#tput cup $x 0
-echo
-echo $ssid $range
-((x++))
-#tput cup $x 0
-echo -n $(sqlite3 ssid_intel.db "select category from ssid_intel where ssid_hex=\"$ssid_hex\";")
-echo $(sqlite3 ssid_intel.db "select location from ssid_intel where ssid_hex=\"$ssid_hex\";")
-((x++))
-airport=$(sqlite3 ssid_intel.db "select is_airport from ssid_intel where ssid_hex=\"$ssid_hex\" and is_airport!=0;")
-#tput cup $x 0
-echo  $airport
-((x++))
-#tput cup $x 0
-echo -n $(sqlite3 ssid_intel.db "select is_name from ssid_intel where ssid_hex=\"$ssid_hex\" and is_name!=0;")  \ 
-is_oneloc=$(sqlite3 ssid_intel.db "select is_oneloc from ssid_intel where ssid_hex=\"$ssid_hex\" and is_name!=0;")
-if [[ $is_oneloc -eq 1 ]]
-then
-	echo Single Location
-fi
-
-
-
-((x++))
-done <<< $(sqlite3 ssid.db "select ssid_hex,rssi from ssid where ssid_hex!=\"<MISSING>\" and time>$date group by ssid_hex;")
-
-
+	device_banner "$id"
+	echo
+	echo "Preferred networks (rarest first -- rare entries are the identifying ones):"
+	dq <<SQL | awk -F'\t' '{ printf "  %-34s %6s  %s\n", $1, $2, $3 }'
+select distinct
+       substr(unhex(s.ssid_hex),1,34),
+       ifnull(round(i.rarity,1),'-'),
+       ifnull(nullif(i.location,'0'),'')
+  from ssid s
+  left join ssid_intel i on i.ssid_hex = s.ssid_hex
+ where s.device_id = $id
+   and s.ssid_hex <> '<MISSING>'
+ order by i.rarity desc;
+SQL
 }

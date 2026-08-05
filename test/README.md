@@ -27,6 +27,10 @@ If the daemon is not running: `sudo systemctl start docker`.
 | `05_location` | WiGLE summarisation against canned API bodies: single city, multi-city, multi-country, zero results, quota exhaustion, uncached, jq quoting |
 | `06_ifs_order` | Enrichment results are independent of pass order, proving `IFS` no longer leaks between functions |
 | `07_legacy_diagnostic` | `diagnose_legacy_rows.sh` detects shifted rows and writes nothing |
+| `08_rarity` | Continuous SSID rarity: corpus load, comma-bearing SSIDs, unseen = max rarity, and that rarity separates SSIDs `is_common` cannot |
+| `09_seqgraph` | Device identity across MAC rotation, 12-bit counter wrap, stable ids across incremental runs, alias determinism, confidence from IE consistency |
+| `10_display` | Display layer queries MariaDB not sqlite, and surfaces alias + confidence + rarity |
+| `11_pnl_validate` | The preferred network list attached to each device, `pnl_rarity`, and the static-MAC accuracy harness detecting a real false merge and split |
 
 ## Rules
 

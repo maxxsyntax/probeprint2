@@ -16,14 +16,18 @@ ssid_2bursts-wlan_sa >/tmp/burst_mac.log 2>&1
 assert_not_contains "wlan_sa pass produced no SQL error" \
     "ERROR" "$(cat /tmp/burst_mac.log)"
 
-assert_eq "wlan_sa pass created exactly one burst" \
-    "1" "$(sq1 "select count(*) from bursts where bmethod='wlan_sa';")"
+# Keyed on this fixture's own burst rather than a global count: other fixtures
+# in seed.sql (the sequence-graph rotations) legitimately form bursts too.
+BURST_T=1700000200.100000
+
+assert_eq "wlan_sa pass created a burst for the 4-frame MAC" \
+    "1" "$(sq1 "select count(*) from bursts where time='$BURST_T' and bmethod='wlan_sa';")"
 
 assert_eq "burst contains all 4 probes from the shared MAC" \
-    "4" "$(sq1 "select burst_size from bursts where bmethod='wlan_sa';")"
+    "4" "$(sq1 "select burst_size from bursts where time='$BURST_T';")"
 
 # All four member SSIDs must appear in the colon-joined ssids column.
-ssids=$(sq1 "select ssids from bursts where bmethod='wlan_sa';")
+ssids=$(sq1 "select ssids from bursts where time='$BURST_T';")
 for name in BurstAlpha BurstBravo BurstCharlie BurstDelta; do
     assert_contains "burst ssids include $name" "$(hexof $name)" "$ssids"
 done
@@ -32,7 +36,7 @@ assert_eq "burst members marked is_processed=100" \
     "4" "$(sq1 "select count(*) from ssid where wlan_sa='0a:00:00:00:00:01' and is_processed=100;")"
 
 assert_eq "burst duration is non-zero" \
-    "1" "$(sq1 "select count(*) from bursts where bmethod='wlan_sa' and burst_duration+0 > 0;")"
+    "1" "$(sq1 "select burst_duration+0 > 0 from bursts where time='$BURST_T';")"
 
 # --- grouping by sequence number -----------------------------------------
 ssid2bursts-seq >/tmp/burst_seq.log 2>&1
@@ -65,6 +69,6 @@ is_uniq >/tmp/burst_uniq.log 2>&1
 assert_eq "every burst got an is_uniq verdict" \
     "0" "$(sq1 "select count(*) from bursts where is_uniq is null;")"
 assert_eq "the 4-distinct-ssid burst is marked unique" \
-    "1" "$(sq1 "select is_uniq from bursts where bmethod='wlan_sa';")"
+    "1" "$(sq1 "select is_uniq from bursts where time='$BURST_T';")"
 
 finish

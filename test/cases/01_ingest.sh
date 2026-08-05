@@ -81,4 +81,32 @@ assert_eq "no freq value is outside the plausible wifi range" \
 assert_eq "imported rows are tagged with the capture filename" \
     "$PCAP" "$(sq1 "select tag from ssid where ssid_hex='$(hexof HomeNetwork)';")"
 
+# --- Information Element fingerprint columns ------------------------------
+# The IEs Pintor & Atzori measured as actually discriminative. Before this,
+# only IE 191 (VHT) was captured -- their weakest and rarest feature.
+row=$(sq1 "select concat_ws('/',ht,extcap,vendor_oui) from ssid where ssid_hex='$(hexof HomeNetwork)';")
+assert_eq "IE 45 / 127 / 221 captured" \
+    "0x09ef/0x04,0x00,0x40,0x00,0x00,0x00,0x00,0x40/6130,5271450" "$row"
+
+# IE presence and ordering is a fingerprint independent of IE contents.
+assert_eq "IE order captured" \
+    "0,1,45,127,191,221,221" \
+    "$(sq1 "select ie_order from ssid where ssid_hex='$(hexof HomeNetwork)';")"
+
+# ie_fp is a generated column, so it cannot drift from its inputs.
+fp=$(sq1 "select ie_fp from ssid where ssid_hex='$(hexof HomeNetwork)';")
+assert_eq "ie_fp is a 32-char md5" "32" "${#fp}"
+
+# Devices with identical IEs share a fingerprint; that is the point, and also
+# the documented limitation (it identifies a model/OS build, not a person).
+assert_eq "identical IE sets produce identical fingerprints" "1" \
+    "$(sq1 "select count(distinct ie_fp) from ssid where ie_order='0,1,45,127,191,221,221';")"
+
+# A frame carrying none of the fingerprint IEs must yield NULLs, not shifted
+# values from neighbouring columns.
+assert_eq "frame with no fingerprint IEs stores NULLs" "NULL/NULL/NULL" \
+    "$(sq1 "select concat_ws('/',ifnull(ht,'NULL'),ifnull(extcap,'NULL'),ifnull(vendor_oui,'NULL')) from ssid where ssid_hex='$(hexof BareIeNet)';")"
+assert_eq "frame with no fingerprint IEs keeps its own seq" "400" \
+    "$(sq1 "select seq from ssid where ssid_hex='$(hexof BareIeNet)';")"
+
 finish

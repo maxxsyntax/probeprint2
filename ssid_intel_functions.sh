@@ -28,6 +28,7 @@ categories["CULTURE_LUXURY"]="Estates;lux;yatch;social;marina;penthouse;jetex;gi
 
 source .env
 source ./vendor_functions.sh
+source ./rarity_functions.sh
 
 
 #functions

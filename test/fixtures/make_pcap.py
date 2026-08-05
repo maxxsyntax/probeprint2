@@ -37,9 +37,30 @@ from scapy.all import (
 VHT_CAP_ID = 191
 VHT_CAP_BODY = bytes.fromhex("32001780" "03fbfa00" "00fbfa00")
 
+# HT Capabilities (ID 45). The body is exactly 26 bytes -- capability info (2),
+# A-MPDU parameters (1), supported MCS set (16), HT extended capabilities (2),
+# transmit beamforming (4), ASEL (1). A wrong length makes tshark treat the
+# element as malformed and `wlan.ht.capabilities` comes back empty.
+HT_CAP_ID = 45
+HT_CAP_BODY = bytes.fromhex(
+    "ef09" "17" "ffff0000000000000000000000000000" "0000" "00000000" "00")
+assert len(HT_CAP_BODY) == 26
+
+# Extended Capabilities (ID 127) -- the single most discriminative IE.
+EXTCAP_ID = 127
+EXTCAP_BODY = bytes.fromhex("0400400000000040")
+
+# Vendor Specific (ID 221). Two of them, so the OUI list has more than one
+# entry: 00:17:f2 is Apple, 50:6f:9a is the Wi-Fi Alliance.
+VENDOR_ID = 221
+VENDOR_BODIES = [
+    bytes.fromhex("0017f2" "0a00010400"),
+    bytes.fromhex("506f9a" "0a00010400"),
+]
+
 
 def probe(ssid: bytes, mac: str, seq: int, *, vht: bool = True,
-          signal: bool = True, channel: bool = True):
+          signal: bool = True, channel: bool = True, ies: bool = True):
     """Build one probe-request frame wrapped in a radiotap header."""
     dot11 = Dot11(
         type=0,           # management
@@ -53,8 +74,15 @@ def probe(ssid: bytes, mac: str, seq: int, *, vht: bool = True,
     frame = dot11 / Dot11ProbeReq() / Dot11Elt(ID=0, info=ssid)
     # Supported rates, so the frame resembles a real probe rather than a stub.
     frame = frame / Dot11Elt(ID=1, info=b"\x02\x04\x0b\x16")
+    if ies:
+        # The IEs that actually carry the device fingerprint.
+        frame = frame / Dot11Elt(ID=HT_CAP_ID, info=HT_CAP_BODY)
+        frame = frame / Dot11Elt(ID=EXTCAP_ID, info=EXTCAP_BODY)
     if vht:
         frame = frame / Dot11Elt(ID=VHT_CAP_ID, info=VHT_CAP_BODY)
+    if ies:
+        for body in VENDOR_BODIES:
+            frame = frame / Dot11Elt(ID=VENDOR_ID, info=body)
 
     present = []
     kwargs = {}
@@ -89,6 +117,9 @@ def main(out_path: str) -> None:
         # Identical timestamps -> primary-key collision on `time`.
         ("dup_time_a",   probe(b"DupTimeOne",   "aa:bb:cc:dd:ee:09", 300), base + 20.0),
         ("dup_time_b",   probe(b"DupTimeTwo",   "aa:bb:cc:dd:ee:0a", 301), base + 20.0),
+        # A device advertising no fingerprint IEs at all, so the ie_fp columns
+        # must come back NULL rather than shifting other columns.
+        ("bare_ies",     probe(b"BareIeNet",    "aa:bb:cc:dd:ee:0b", 400, ies=False, vht=False), base + 30.0),
     ]
 
     packets = []

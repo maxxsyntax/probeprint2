@@ -11,3 +11,5 @@ pipe
 industry.txt
 ignore.txt
 notes.txt
+test/out/
+test/fixtures/*.pcap

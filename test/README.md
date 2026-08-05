@@ -1,0 +1,70 @@
+# probeprint2 test suite
+
+A Docker-based regression suite. The container runs its own MariaDB and has
+`tshark` installed, so the SQL and the packet-parsing paths are exercised for
+real rather than mocked.
+
+## Running
+
+```sh
+cd probeprint2
+docker build -f test/Dockerfile -t probeprint2-test .
+docker run --rm probeprint2-test              # full suite, non-zero exit on failure
+docker run --rm probeprint2-test test/run_tests.sh ingest   # only matching cases
+docker run --rm -it probeprint2-test bash     # interactive, DB already up
+```
+
+If the daemon is not running: `sudo systemctl start docker`.
+
+## What each case covers
+
+| Case | Covers |
+|---|---|
+| `01_ingest` | Field alignment through `ingest_functions.sh`, including empty mid-row fields, the `<MISSING>` sentinel, awkward SSID bytes, and duplicate timestamps |
+| `02_bursts` | All three burst-grouping methods (`wlan_sa`, `seq`, `vht`), `is_uniq`, numeric RSSI comparison |
+| `03_schema` | `build_dbs.sh` runs clean and idempotently, creates all tables, the `score` column and the `pi` user |
+| `04_enrichment` | `categorize`, `check_language`, `check_fqdn`, `check_airport`, `check_name`, `check_common`, `mac2vendor`, `make_ignore_list`, and that no pass treats the SQL header as data |
+| `05_location` | WiGLE summarisation against canned API bodies: single city, multi-city, multi-country, zero results, quota exhaustion, uncached, jq quoting |
+| `06_ifs_order` | Enrichment results are independent of pass order, proving `IFS` no longer leaks between functions |
+| `07_legacy_diagnostic` | `diagnose_legacy_rows.sh` detects shifted rows and writes nothing |
+
+## Rules
+
+**No network calls.** `test/fixtures/locs/` pre-populates the WiGLE cache so
+`wigle_fetch`'s existence check short-circuits before `curl`. The container's
+`.env` sets `online=0` and a dummy `APIKEY`. The WiGLE daily quota is not a test
+resource — keep it that way when adding cases.
+
+**The repo is copied, not mounted.** A test run cannot write back into the
+working tree.
+
+**Each case reseeds.** Call `reset_db` from `lib.sh` at the top of a case; cases
+run in separate bash processes so a leaked `IFS` or `cd` cannot bleed across.
+
+## Adding a case
+
+Create `test/cases/NN_name.sh`:
+
+```sh
+source "${REPO:-/opt/probeprint2}/test/lib.sh"
+cd "$REPO"
+reset_db
+
+assert_eq "what it should do" "expected" "$(sq1 "select ...;")"
+
+finish
+```
+
+Helpers in `lib.sh`: `assert_eq`, `assert_contains`, `assert_not_contains`,
+`sq` (headerless query), `sq1` (scalar), `hexof` (string to `ssid_hex`),
+`reset_db`, `finish`.
+
+## Fixtures
+
+- `fixtures/make_pcap.py` — scapy generator for the synthetic 802.11 pcap. Every
+  frame must carry a radiotap header: a pcap has one link-layer type, so a bare
+  `Dot11` frame mixed into a RadioTap file is misparsed and vanishes from
+  `-T fields` output.
+- `fixtures/seed.sql` — deterministic `ssid` rows, written as `lower(hex('...'))`
+  so intent stays readable.
+- `fixtures/locs/*.location` — canned WiGLE responses, named `<ssid_hex>.location`.

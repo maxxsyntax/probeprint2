@@ -1,0 +1,43 @@
+{
+  "success": true,
+  "totalResults": 3,
+  "resultCount": 3,
+  "results": [
+    {
+      "trilat": 41.86254768,
+      "trilong": -87.91438916,
+      "ssid": "ManyCountries",
+      "qos": 7,
+      "country": "US",
+      "region": "IL",
+      "city": "Chicago",
+      "road": "West Higgins Road",
+      "housenumber": "8420",
+      "postalcode": "60631"
+    },
+    {
+      "trilat": 51.50730000,
+      "trilong": -0.12780000,
+      "ssid": "ManyCountries",
+      "qos": 6,
+      "country": "GB",
+      "region": "England",
+      "city": "London",
+      "road": "Strand",
+      "housenumber": "1",
+      "postalcode": "WC2R"
+    },
+    {
+      "trilat": 35.68950000,
+      "trilong": 139.69170000,
+      "ssid": "ManyCountries",
+      "qos": 5,
+      "country": "JP",
+      "region": "Tokyo",
+      "city": "Shinjuku",
+      "road": "Yasukuni Dori",
+      "housenumber": "3",
+      "postalcode": "160-0022"
+    }
+  ]
+}

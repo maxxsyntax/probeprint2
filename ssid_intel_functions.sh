@@ -21,12 +21,13 @@ categories["TECH_OTHER"]="ASUS;Apple;WebOS;ZHIYUN;Sonos_"
 categories["TECH_PHONE"]="AndroidAP;Pixel;Galaxy;Huawei;iPad;LGWiFi;nova;POCO;X3;Samsung;tmobile;TMOBILE;TMobile;Xiaom;Verizon;telefono;phone"
 categories["TECH_PRINTER"]="Canon_;DIRECT_;HP_Print_;HP-Setup"
 categories["TRAVEL"]="Lounge;AERO;AIRPORT;United;Lounge;Airlines;Amtrak;Delta;Boingo;GoGo;_Free;Fly;SouthwestWiFi;Terminal;aainflight.com;SANfreewifi;trein;aa-guest"
-categories["LOCATION"]="Marina;beach;Harbor;Apartment;FLAT;Lobby;cdmx;river;Tour_Eiffel;stadium;Athens"
+categories["LOCATION_VAGUE"]="Marina;beach;Harbor;Apartment;FLAT;Lobby;cdmx;river;Tour_Eiffel;stadium;Athens"
 #customize in .env file
 #categories["INDUSTRY_VIP"]="XXX"
 categories["CULTURE_LUXURY"]="Estates;lux;yatch;social;marina;penthouse;jetex;ginza"
 
 source .env
+source ./vendor_functions.sh
 
 
 #functions
@@ -66,7 +67,7 @@ categorize () {
 #while true;
 #do
 	echo categorize start $(date +"%H:%M:%S.%3N")
-	mysql probeprint <<< "update ssid_intel set category=\"OTHER_ANOMALOUS\" where ssid_hex like '%00' or ssid_hex like '%000%' or ssid_hex like '%fff%' or ssid_hex like '8%' or ssid_hex like '1%';"
+	mysql probeprint <<< "update ssid_intel set category=\"OTHER_ANOMALOUS\" where (ssid_hex like '%00' or ssid_hex like '%000%' or ssid_hex like '%fff%' or ssid_hex like '8%' or ssid_hex like '1%') and category is null;"
 	while read ssid_hex; 
 	do
  		ssid=$(echo -n $ssid_hex | xxd -r -p)
@@ -83,7 +84,7 @@ categorize () {
 				fi
  			done
 		done
-	done <<< $(mysql probeprint <<< "select ssid_hex from ssid_intel where category is null;")
+	done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where category is null;")
 #bug where next line is nullifed on ssids starting with special character
 	mysql probeprint <<< "update ssid_intel set category = \"OTHER_UNKNOWN\"  where category is null;"
 	echo categorize stop $(date +"%H:%M:%S.%3N")
@@ -103,11 +104,13 @@ done < lists/industry.txt
 check_airport () {
 	#while true; do
 echo Airport check start $(date +"%H:%M:%S.%3N")
-IFS=\|; 
-while read line; do 
-	arr=($line);
-	 iata_hex=$(echo -n ${arr[0]} | xxd -p)
-	 mysql probeprint <<< "update ssid_intel set is_airport=\"${arr[1]}\" where ssid_hex like \"$iata_hex%\" or ssid_hex like '%$iata_hex%'; "
+#IFS is scoped to the read rather than set globally. This file is sourced into
+#one shell, so a bare `IFS=\|` leaked into every function that ran afterwards --
+#and because mysql -N output is tab separated, a leaked pipe IFS made
+#`arr=($row)` swallow whole rows into arr[0].
+while IFS='|' read -r iata description; do
+	 iata_hex=$(printf '%s' "$iata" | xxd -p)
+	 mysql probeprint <<< "update ssid_intel set is_airport=\"$description\" where ssid_hex like \"$iata_hex%\" or ssid_hex like '%$iata_hex%'; "
 done < lists/airports.txt
 mysql probeprint <<< "update ssid_intel set is_airport=0 where is_airport is null;"
 sleep 10
@@ -128,26 +131,26 @@ while read ssid_hex; do
 	name=$(echo $ssid_hex | sed 's/277320.*//g' | xxd -r -p| tr -cd '[:print:]')
 	mysql probeprint <<< "update ssid_intel set is_name=\"$name\" where ssid_hex=\"$ssid_hex\";"
 #	echo $ssid_hex $name
-done <<< $(mysql probeprint <<< "select ssid_hex from ssid_intel where ssid_hex like \"%277320%\";")
+done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where ssid_hex like \"%277320%\" and is_name is null;")
 
 #look for Familia
 while read ssid_hex; do
 	name=$(echo $ssid_hex | sed 's/46616d696c696120//g' | xxd -r -p| tr -cd '[:print:]')
 	mysql probeprint <<< "update ssid_intel set is_name=\"$name\" where ssid_hex=\"$ssid_hex\";"
 #	#echo $ssid_hex $name
-done <<< $(mysql probeprint <<< "select ssid_hex from ssid_intel where ssid_hex like \"46616d696c6961%\";")
+done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where ssid_hex like \"46616d696c6961%\" and is_name is null;")
 
 while read ssid_hex; do
 	name=$(echo $ssid_hex | sed 's/66616d696c696120//g' | xxd -r -p| tr -cd '[:print:]')
 	mysql probeprint <<< "update ssid_intel set is_name=\"$name\" where ssid_hex=\"$ssid_hex\";"
 #	echo $ssid_hex $name
-done <<< $(mysql probeprint <<< "select ssid_hex from ssid_intel where ssid_hex like \"66616d696c6961%\";")
+done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where ssid_hex like \"66616d696c6961%\" and is_name is null;")
 
 while read ssid_hex; do
 	name=$(echo $ssid_hex | sed 's/46616d696c79//g' | xxd -r -p| tr -cd '[:print:]')
 	mysql probeprint <<< "update ssid_intel set is_name=\"$name\" where ssid_hex=\"$ssid_hex\";"
 	#echo $ssid_hex $name
-done <<< $(mysql probeprint <<< "select ssid_hex from ssid_intel where ssid_hex like \"%46616d696c79\";")
+done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where ssid_hex like \"%46616d696c79\" and is_name is null;")
 
 while read line; 
 do
@@ -155,7 +158,7 @@ do
 	name_hex_lower=$(echo -n $line | tr [:upper:] [:lower:] | xxd -p)
 	name_hex_upper=$(echo -n $line | tr [:lower:] [:upper:] | xxd -p)
 	#echo $name_hex
-	mysql probeprint <<< "update ssid_intel set is_name=\"$line\" where (ssid_hex like \"$name_hex%\" or ssid_hex like \"%$name_hex%\") or (ssid_hex like \"$name_hex_lower%\" or ssid_hex like \"%$name_hex_lower%\") or (ssid_hex like \"$name_hex_upper%\" or ssid_hex like \"%$name_hex_upper%\") and is_name is null;"
+	mysql probeprint <<< "update ssid_intel set is_name=\"$line\" where (ssid_hex like \"$name_hex%\" or ssid_hex like \"%$name_hex%\" or ssid_hex like \"$name_hex_lower%\" or ssid_hex like \"%$name_hex_lower%\" or ssid_hex like \"$name_hex_upper%\" or ssid_hex like \"%$name_hex_upper%\") and is_name is null;"
 done < lists/names.txt
 mysql probeprint <<< "update ssid_intel set category=\"NAME\" where is_name!=0 and is_name is not null;"
 mysql probeprint <<< "update ssid_intel set is_name=0 where is_name is null;"
@@ -167,21 +170,30 @@ sleep 10
 
 check_fqdn () {
 	echo check_fqdn start $(date +"%H:%M:%S.%3N")
-	 ssid=$(echo -n $ssid_hex | xxd -r -p)
-	while read ssid_hex; do 
-#https://data.iana.org/TLD/tlds-alpha-by-domain.txt
-while read domain; do
 
-	fqdn=\\.${domain,,}
-	len=${#fqdn}
-	last4=${ssid: -$len}
-	if [[ "${last4,,}" =~ ${fqdn,,} ]]
-		then
-		#echo Domain $domain Last4 $last4 $ssid
+# Load the TLD list once instead of re-reading it for every SSID.
+#https://data.iana.org/TLD/tlds-alpha-by-domain.txt
+local -A tlds=()
+while read -r domain; do
+	[ -n "$domain" ] && tlds[${domain,,}]=1
+done < lists/domains.txt
+
+while read -r ssid_hex; do
+	# Decode per row. This used to sit above the loop with ssid_hex unset,
+	# so $ssid was empty every iteration and nothing ever matched.
+	ssid=$(printf '%s' "$ssid_hex" | xxd -r -p 2>/dev/null | tr -cd '[:print:]')
+
+	case "$ssid" in
+		*.*) tld=${ssid##*.} ;;
+		*)   continue ;;
+	esac
+	[ -z "$tld" ] && continue
+
+	if [[ -n ${tlds[${tld,,}]:-} ]]; then
 		mysql probeprint <<< "update ssid_intel set category=\"OTHER_FQDN\" where ssid_hex=\"$ssid_hex\";"
 	fi
-done < lists/domains.txt
-done <<< $(mysql probeprint <<< "select ssid_hex from ssid_intel where category is null; or category=\"OTHER_UNKNOWN\";")
+#the stray semicolon after `is null` made this a SQL syntax error
+done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where category is null or category=\"OTHER_UNKNOWN\";")
 echo check_fqdn stop $(date +"%H:%M:%S.%3N")
 }
 
@@ -302,12 +314,12 @@ make_ignore_list () {
 	echo ignore_check $(date +"%H:%M:%S.%3N")
 	> lists/ignore.txt
 	while read line; do
-		count=$(mysql probeprint <<< "select count(DISTINCT wlan_sa) from ssid where ssid_hex=\"$line\";")
+		count=$(mysql -N probeprint <<< "select count(DISTINCT wlan_sa) from ssid where ssid_hex=\"$line\";")
 		if [[ $count -gt 40 ]]
 			then
 			echo "$line" >> lists/ignore.txt
 		fi
-	done <<<$(mysql probeprint <<< "select ssid_hex from ssid;"  | sort | uniq -c | sort -nr | head -n30 |tr -s \   | cut -d \  -f3)
+	done <<<$(mysql -N probeprint <<< "select ssid_hex from ssid;"  | sort | uniq -c | sort -nr | head -n30 |tr -s \   | cut -d \  -f3)
 mysql probeprint <<< "select ssid_hex from ssid_intel where category=\"OTHER_ANOMALOUS\";" >> lists/ignore.txt
 echo ignore_check end $(date +"%H:%M:%S.%3N")
 }
@@ -317,9 +329,7 @@ score () {
 	
 	while read -r line; do
 #echo $line
-IFS='|' read -r -a arr2 <<<"$line"
-rowid="${arr2[0]}"
-category="${arr2[1]}"
+IFS='|' read -r ssid_hex category <<<"$line"
 
 
 case $category in
@@ -338,7 +348,7 @@ score=1
 LOCATION_SPECIFIC)
 score=2
 ;;
-LOCATION)
+LOCATION|LOCATION_VAGUE)
 score=1
 ;;
 BIZ_HOTEL)
@@ -430,48 +440,25 @@ score=1
 ;;
 esac
 #echo $rowid $category $score
-mysql probeprint <<< "update ssid_intel set score=\"$score\" where ROWID=\"$rowid\";"
-done <<<$(mysql probeprint <<< "select ROWID,category from ssid_intel where score is null and category is not null;")
+mysql probeprint <<< "update ssid_intel set score=\"$score\" where ssid_hex=\"$ssid_hex\";"
+done <<<$(mysql -N probeprint <<< "select concat_ws('|',ssid_hex,category) from ssid_intel where score is null and category is not null;")
 }
 
 
 bump_score () {
 while read line; 
 do 
-score=$(mysql probeprint <<< "select score from ssid_intel where ROWID=\"$line\";")
+score=$(mysql -N probeprint <<< "select score from ssid_intel where ssid_hex=\"$line\";")
 ((score++))
-mysql probeprint <<< "update ssid_intel set score=\"$score\" where ROWID=\"$line\";"
+mysql probeprint <<< "update ssid_intel set score=\"$score\" where ssid_hex=\"$line\";"
 #echo updating score for row $line
-done <<< $(mysql probeprint <<< "select rowid from ssid_intel where is_oneloc=1;")
+done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where is_oneloc=1;")
 }
 
 
 
-mac2vendor () {
-
-arr=()
-IFS=\|
-while read line; do 
-arr=($line)	
-oui=$(echo "${arr[0]}" |tr -d \: | cut -b1-6)
-
-#echo $line
-vendor=$(grep -i $oui lists/oui.csv | cut -d, -f3,4 | cut -b 1-20 | tr -d \")
-if [[  -n $vendor ]]
-then
-#echo ${arr[0]} $vendor ${arr[1]}
-#update prints with vendor type
-#sqlite3 new.db "update prints set cat_notes2=\"$vendor\" where primary_burst=(select related_burst from bursts where ssids like \"%:${arr[1]}:%\" or ssids like \"%:${arr[1]}\" or ssids like \"${arr[1]}:%\") ;"
-mysql probeprint <<< "update ssid set vendor=\"$vendor\" where ssid_hex=\"${arr[1]}\" and wlan_sa=\"${arr[0]}\"; "
-else
-	mysql probeprint <<< "update ssid set vendor=\".\" where ssid_hex=\"${arr[1]}\" and wlan_sa=\"${arr[0]}\"; "
-
-fi
-#select SSIDS with only 1 mac address associated.  The idea being, a mac will randomize and then probe for the same ssid; thus 2+ wlan_sa per ssid.  This will leave some false negatives but will tune out the majority of dynamic mac addresses (which would have no vendor)
-#needs to account for ssid's already analyzed
-done <<< $(mysql probeprint <<< "select wlan_sa,ssid_hex from ssid where vendor is null group by ssid_hex HAVING count(DISTINCT wlan_sa) =1;")
-}
-
+# mac2vendor now lives in vendor_functions.sh, sourced at the top of this file,
+# so build_ssid_intel.sh and standalone_mac2vendor.sh share one implementation.
 
 
 check_language () {

@@ -1,0 +1,43 @@
+{
+  "success": true,
+  "totalResults": 3,
+  "resultCount": 3,
+  "results": [
+    {
+      "trilat": 41.86254768,
+      "trilong": -87.91438916,
+      "ssid": "ManyCities",
+      "qos": 7,
+      "country": "US",
+      "region": "IL",
+      "city": "Chicago",
+      "road": "West Higgins Road",
+      "housenumber": "8420",
+      "postalcode": "60631"
+    },
+    {
+      "trilat": 41.72510000,
+      "trilong": -88.15340000,
+      "ssid": "ManyCities",
+      "qos": 5,
+      "country": "US",
+      "region": "IL",
+      "city": "Naperville",
+      "road": "Ogden Avenue",
+      "housenumber": "112",
+      "postalcode": "60540"
+    },
+    {
+      "trilat": 42.03360000,
+      "trilong": -87.68330000,
+      "ssid": "ManyCities",
+      "qos": 6,
+      "country": "US",
+      "region": "IL",
+      "city": "Evanston",
+      "road": "Church Street",
+      "housenumber": "1700",
+      "postalcode": "60201"
+    }
+  ]
+}

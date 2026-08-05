@@ -6,53 +6,66 @@
 
 -- ---------------------------------------------------------------------------
 -- Enrichment fixtures
+--
+-- Spaced 200s apart, comfortably beyond SEQGRAPH_ALPHA. These represent
+-- unrelated devices, so they must not chain together in the sequence graph.
+-- When they were all stamped within microseconds of each other with sequential
+-- seq numbers, the graph merged all 19 into a single device -- correct
+-- behaviour on incoherent input, and a good illustration of the algorithm's
+-- real false-merge mode in dense environments.
 -- ---------------------------------------------------------------------------
 
 -- categorize(): keyword hits across a few different category buckets.
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  (lower(hex('Starbucks WiFi')), '02:00:00:00:00:01', '1700000100.000001', '-50', 2437, 1, '0x03fbfa00'),
-  (lower(hex('Hilton Garden Inn')), '02:00:00:00:00:02', '1700000100.000002', '-55', 2437, 2, '0x03fbfa00'),
-  (lower(hex('AndroidAP1234')), '02:00:00:00:00:03', '1700000100.000003', '-60', 2437, 3, '0x03fbfa00'),
-  (lower(hex('Tesla Model 3')), '02:00:00:00:00:04', '1700000100.000004', '-65', 2437, 4, '0x03fbfa00');
+  (lower(hex('Starbucks WiFi')), '02:00:00:00:00:01', '1700010000.000000', '-50', 2437, 1, '0x03fbfa00'),
+  (lower(hex('Hilton Garden Inn')), '02:00:00:00:00:02', '1700010200.000000', '-55', 2437, 2, '0x03fbfa00'),
+  (lower(hex('AndroidAP1234')), '02:00:00:00:00:03', '1700010400.000000', '-60', 2437, 3, '0x03fbfa00'),
+  (lower(hex('Tesla Model 3')), '02:00:00:00:00:04', '1700010600.000000', '-65', 2437, 4, '0x03fbfa00');
 
 -- check_fqdn(): must reach OTHER_FQDN. Currently never matches because $ssid is
 -- computed before the read loop, so this row is the regression test for it.
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  (lower(hex('guest.abb')), '02:00:00:00:00:05', '1700000100.000005', '-70', 2437, 5, '0x03fbfa00');
+  (lower(hex('guest.abb')), '02:00:00:00:00:05', '1700010800.000000', '-70', 2437, 5, '0x03fbfa00');
 
 -- check_name(): 'Adam' is in lists/names.txt.
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  (lower(hex('Adam''s iPhone')), '02:00:00:00:00:06', '1700000100.000006', '-45', 2437, 6, '0x03fbfa00');
+  (lower(hex('Adam''s iPhone')), '02:00:00:00:00:06', '1700011000.000000', '-45', 2437, 6, '0x03fbfa00');
 
 -- check_airport(): 'AMS' is in lists/airports.txt.
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  (lower(hex('AMS Airport Free')), '02:00:00:00:00:07', '1700000100.000007', '-72', 2437, 7, '0x03fbfa00');
+  (lower(hex('AMS Airport Free')), '02:00:00:00:00:07', '1700011200.000000', '-72', 2437, 7, '0x03fbfa00');
 
--- check_common(): 'xfinitywifi' is the top entry in lists/ssid.csv.
+-- check_common(): 'xfinitywifi' is the top entry in lists/ssid.csv (21.8M
+-- sightings). 'Yellowmonkey' is also in the list but with only 399, and
+-- '010101' with 250. All three are therefore is_common=1, which is exactly the
+-- point the rarity test makes: the binary flag cannot tell them apart, while
+-- rarity puts them ~11 apart on a log scale.
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  (lower(hex('xfinitywifi')), '02:00:00:00:00:08', '1700000100.000008', '-80', 2437, 8, '0x03fbfa00');
+  (lower(hex('xfinitywifi')),  '02:00:00:00:00:08', '1700011400.000000', '-80', 2437, 8, '0x03fbfa00'),
+  (lower(hex('Yellowmonkey')), '02:00:00:00:00:10', '1700011600.000000', '-81', 2437, 17, '0x03fbfa00'),
+  (lower(hex('010101')),       '02:00:00:00:00:11', '1700011800.000000', '-82', 2437, 18, '0x03fbfa00');
 
 -- summarize_location() / check_oneloc(): one row per canned WiGLE fixture in
 -- test/fixtures/locs/.
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  (lower(hex('OneCity')), '02:00:00:00:00:09', '1700000100.000009', '-52', 2437, 9, '0x03fbfa00'),
-  (lower(hex('ManyCities')), '02:00:00:00:00:0a', '1700000100.000010', '-53', 2437, 10, '0x03fbfa00'),
-  (lower(hex('ManyCountries')), '02:00:00:00:00:0b', '1700000100.000011', '-54', 2437, 11, '0x03fbfa00'),
-  (lower(hex('NoResults')), '02:00:00:00:00:0c', '1700000100.000012', '-56', 2437, 12, '0x03fbfa00');
+  (lower(hex('OneCity')), '02:00:00:00:00:09', '1700012000.000000', '-52', 2437, 9, '0x03fbfa00'),
+  (lower(hex('ManyCities')), '02:00:00:00:00:0a', '1700012200.000000', '-53', 2437, 10, '0x03fbfa00'),
+  (lower(hex('ManyCountries')), '02:00:00:00:00:0b', '1700012400.000000', '-54', 2437, 11, '0x03fbfa00'),
+  (lower(hex('NoResults')), '02:00:00:00:00:0c', '1700012600.000000', '-56', 2437, 12, '0x03fbfa00');
 
 -- check_anomalies(): hex-anomalous SSIDs (embedded nulls / 0xff runs).
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  ('000000000000', '02:00:00:00:00:0d', '1700000100.000013', '-90', 2437, 13, '0x03fbfa00'),
-  ('fffffffffff0', '02:00:00:00:00:0e', '1700000100.000014', '-91', 2437, 14, '0x03fbfa00');
+  ('000000000000', '02:00:00:00:00:0d', '1700012800.000000', '-90', 2437, 13, '0x03fbfa00'),
+  ('fffffffffff0', '02:00:00:00:00:0e', '1700013000.000000', '-91', 2437, 14, '0x03fbfa00');
 
 -- mac2vendor(): 00:1a:11 is Google in lists/oui.csv, and this SSID is probed by
 -- exactly one MAC, which is the condition mac2vendor selects on.
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  (lower(hex('SingleMacNet')), '00:1a:11:00:00:01', '1700000100.000015', '-58', 2437, 15, '0x03fbfa00');
+  (lower(hex('SingleMacNet')), '00:1a:11:00:00:01', '1700013200.000000', '-58', 2437, 15, '0x03fbfa00');
 
 -- check_language(): a Cyrillic SSID (UTF-8 'Привет' starts d0 9f).
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  (lower(hex(_utf8mb4'Привет')), '02:00:00:00:00:0f', '1700000100.000016', '-61', 2437, 16, '0x03fbfa00');
+  (lower(hex(_utf8mb4'Привет')), '02:00:00:00:00:0f', '1700013400.000000', '-61', 2437, 16, '0x03fbfa00');
 
 -- ---------------------------------------------------------------------------
 -- Burst fixtures
@@ -87,4 +100,38 @@ insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
 -- tshark reports it. Downstream queries filter on this literal string, so the
 -- ingest fix must preserve it.
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
-  ('<MISSING>', '02:00:00:00:00:ff', '1700000100.000099', '-88', 2437, 99, '0x03fbfa00');
+  ('<MISSING>', '02:00:00:00:00:ff', '1700013600.000000', '-88', 2437, 99, '0x03fbfa00');
+
+-- ---------------------------------------------------------------------------
+-- Sequence-graph fixtures (seqgraph_functions.sh)
+-- ---------------------------------------------------------------------------
+
+-- One device across three MAC rotations. Three bursts 50s apart, each under a
+-- different randomised address, with the sequence counter running continuously
+-- through all of them. The graph must join all eight frames into ONE device_id
+-- spanning three MACs -- the old ssid2bursts-seq could never do this, because
+-- its window was a single second.
+insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
+  (lower(hex('RoamHome')),  '0d:00:00:00:00:01', '1700001000.000000', '-55', 2437, 1000, '0x03fbfa00'),
+  (lower(hex('RoamCafe')),  '0d:00:00:00:00:01', '1700001000.100000', '-55', 2437, 1001, '0x03fbfa00'),
+  (lower(hex('RoamWork')),  '0d:00:00:00:00:01', '1700001000.200000', '-55', 2437, 1002, '0x03fbfa00'),
+  -- MAC rotation #1, 50s later, sequence continues
+  (lower(hex('RoamHome')),  '0d:00:00:00:00:02', '1700001050.000000', '-56', 2437, 1060, '0x03fbfa00'),
+  (lower(hex('RoamCafe')),  '0d:00:00:00:00:02', '1700001050.100000', '-56', 2437, 1061, '0x03fbfa00'),
+  (lower(hex('RoamWork')),  '0d:00:00:00:00:02', '1700001050.200000', '-56', 2437, 1062, '0x03fbfa00'),
+  -- MAC rotation #2, another 50s on
+  (lower(hex('RoamHome')),  '0d:00:00:00:00:03', '1700001100.000000', '-57', 2437, 1120, '0x03fbfa00'),
+  (lower(hex('RoamCafe')),  '0d:00:00:00:00:03', '1700001100.100000', '-57', 2437, 1121, '0x03fbfa00');
+
+-- A second, unrelated device. Far enough away in time (900s > alpha) that it
+-- must NOT be merged into the chain above, despite plausible sequence numbers.
+insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
+  (lower(hex('OtherPhone')), '0e:00:00:00:00:01', '1700002000.000000', '-60', 2437, 1200, '0x03fbfa00'),
+  (lower(hex('OtherPhone')), '0e:00:00:00:00:01', '1700002000.100000', '-60', 2437, 1201, '0x03fbfa00');
+
+-- Sequence counter wrapping past its 12-bit maximum mid-chain: 4094 -> 2 is a
+-- forward distance of 4, not a backward jump of 4092.
+insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
+  (lower(hex('WrapNet')), '0f:00:00:00:00:01', '1700003000.000000', '-65', 2437, 4090, '0x03fbfa00'),
+  (lower(hex('WrapNet')), '0f:00:00:00:00:01', '1700003000.100000', '-65', 2437, 4094, '0x03fbfa00'),
+  (lower(hex('WrapNet')), '0f:00:00:00:00:02', '1700003000.200000', '-65', 2437,    2, '0x03fbfa00');

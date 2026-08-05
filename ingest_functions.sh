@@ -26,7 +26,19 @@
 PROBE_SEP='|'
 
 # Field order is defined once here and consumed positionally by ingest_stream().
-# Keep the two in sync.
+# Keep the two in sync. Append new fields at the end so existing positions --
+# and therefore any saved capture pipelines -- do not shift.
+#
+# The last four are the Information Element fingerprint. Pintor & Atzori
+# (GLOBECOM 2022) measured which IEs actually discriminate between devices:
+# IE 127 Extended Capabilities (Gini 0.34), IE 45 HT Capabilities (0.175) and
+# IE 221 Vendor Specific (0.162) carry nearly all the signal, and clustering on
+# just those three identified the correct device ~92% of the time. IE 191 VHT,
+# the only one this pipeline captured before, scored 0.073 and appeared in only
+# 11.1% of frames -- it is kept for continuity, not because it is good.
+#
+# wlan.tag.number captures which IEs are present and in what order, which is
+# itself a fingerprint independent of any IE's contents.
 PROBE_TSHARK_ARGS=(
     -T fields
     -e wlan.ssid
@@ -36,6 +48,10 @@ PROBE_TSHARK_ARGS=(
     -e wlan_radio.frequency
     -e wlan.seq
     -e wlan.vht.capabilities
+    -e wlan.ht.capabilities
+    -e wlan.extcap
+    -e wlan.tag.oui
+    -e wlan.tag.number
     -E "separator=$PROBE_SEP"
 )
 
@@ -46,9 +62,10 @@ PROBE_TSHARK_ARGS=(
 # to mysql, which is how the distributed nodes target the central server
 # (ingest_stream -u pi -h 192.168.1.10).
 ingest_stream () {
-    local ssid_hex wlan_sa time rssi freq seq vht
+    local ssid_hex wlan_sa time rssi freq seq vht ht extcap vendor_oui ie_order
 
-    while IFS="$PROBE_SEP" read -r ssid_hex wlan_sa time rssi freq seq vht; do
+    while IFS="$PROBE_SEP" read -r ssid_hex wlan_sa time rssi freq seq vht \
+                                   ht extcap vendor_oui ie_order; do
         # tshark emits a trailing blank line at the end of each capture window,
         # and a row with no timestamp is not a usable observation.
         [ -z "$time" ] && continue
@@ -62,6 +79,7 @@ ingest_stream () {
             echo "freq is $freq"
             echo "seq is $seq"
             echo "vht is $vht"
+            echo "ie_fp is $ht/$extcap/$vendor_oui [$ie_order]"
         else
             # A wildcard probe with a zero-length SSID. tshark reports the
             # literal string <MISSING>, and downstream queries filter on it,
@@ -76,9 +94,12 @@ ingest_stream () {
         # a timestamp collide. Previously pcap2db.sh retried the identical
         # failing insert in a loop, which can never succeed and span forever.
         mysql "$@" probeprint <<SQL
-insert ignore into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht)
+insert ignore into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht,
+                         ht, extcap, vendor_oui, ie_order)
 values ("$ssid_hex", "$wlan_sa", "$time", "$rssi",
-        nullif("$freq", ''), nullif("$seq", ''), "$vht");
+        nullif("$freq", ''), nullif("$seq", ''), "$vht",
+        nullif("$ht", ''), nullif("$extcap", ''),
+        nullif("$vendor_oui", ''), nullif("$ie_order", ''));
 SQL
     done
 }

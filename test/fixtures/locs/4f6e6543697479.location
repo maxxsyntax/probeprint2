@@ -1,0 +1,19 @@
+{
+  "success": true,
+  "totalResults": 1,
+  "resultCount": 1,
+  "results": [
+    {
+      "trilat": 41.86254768,
+      "trilong": -87.91438916,
+      "ssid": "OneCity",
+      "qos": 7,
+      "country": "US",
+      "region": "IL",
+      "city": "Chicago",
+      "road": "West Higgins Road",
+      "housenumber": "8420",
+      "postalcode": "60631"
+    }
+  ]
+}

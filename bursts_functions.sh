@@ -12,19 +12,18 @@ es=0
 #es exit status and until loop to iterate through all unprocessed lines
 until [[ $es -ne 0 ]]; do
 #select unprocessed row
-row=$(mysql -N probeprint <<< "select ssid_hex,wlan_sa,time from ssid where is_processed=0 wlan_sa is not null and time != \"\" order by time limit 1;")
+#the missing `and` here made this query a syntax error, so es was always
+#non-zero and the until loop exited before grouping a single burst by MAC
+row=$(mysql -N probeprint <<< "select concat_ws('|',ssid_hex,wlan_sa,time) from ssid where is_processed=0 and wlan_sa is not null and time != \"\" order by time limit 1;")
 es=$?
-arr=($row)
-if [[ -z ${arr} ]]
+if [[ -z $row ]]
 	then echo No rows found for wlan_sa
-	echo finishing ssid_2bursts-wlan_sa $(date) 
+	echo finishing ssid_2bursts-wlan_sa $(date)
 	sleep 5
 	return
 	#exit 0
 fi
-ssid_hex=${arr[0]}
-wlan_sa=${arr[1]}
-time=${arr[2]}
+IFS='|' read -r ssid_hex wlan_sa time <<< "$row"
 #echo $ssid_hex $wlan_sa $time
 #sleep 1
 ###analyze probes in the next 1 second
@@ -42,10 +41,7 @@ while read line;
 do
 #sleep 1
 #IFS=\|
-arr2=($line)
-ssid_hex2=${arr2[0]}
-wlan_sa2=${arr2[1]}
-time2=${arr2[2]}
+IFS='|' read -r ssid_hex2 wlan_sa2 time2 <<< "$line"
 
 #append ssid of matching mac address to burst
 #unset IFS
@@ -58,7 +54,7 @@ mysql -N probeprint <<< "update ssid set is_processed=100 where wlan_sa = \"$wla
 fi
 final_time=$time2
 #query for 1 second in the future and iterate through probes to find match ## sqlite3 reverses < and > because numbers are negatives, treats them as positive
-done <<<$(mysql -N probeprint <<< "SELECT ssid_hex,wlan_sa,time from ssid where time < \"$endtime\" and time > \"$begintime\" and wlan_sa=\"$wlan_sa\" and  time != \"\" order by time;")
+done <<<$(mysql -N probeprint <<< "SELECT concat_ws('|',ssid_hex,wlan_sa,time) from ssid where time < \"$endtime\" and time > \"$begintime\" and wlan_sa=\"$wlan_sa\" and  time != \"\" order by time;")
 
 #mark partent probe as processed
 mysql probeprint <<< "update ssid set is_processed=1 where wlan_sa = \"$wlan_sa\" and time = \"$time\";"
@@ -123,21 +119,28 @@ echo ssid_2bursts-seq start $(date +"%H:%M:%S.%3N")
 #pull unproccessed SSID and break into array
 es=0
 until [[ $es -ne 0 ]]; do
-row=$(mysql -N probeprint <<< "select ssid_hex,wlan_sa,time,seq,rssi from ssid where is_processed=1 and seq!=null and  time != \"\" order by time limit 1;")
+#`seq!=null` is never true in SQL, so this always returned zero rows and the
+#function reported "ending no seq_row" on every run.
+#concat_ws with '|' because mysql -N separates columns with tabs, and bash
+#collapses runs of tab as IFS whitespace -- an empty rssi would shift every
+#later column left, the same way the ingest loop used to corrupt rows.
+row=$(mysql -N probeprint <<< "select concat_ws('|',ssid_hex,wlan_sa,time,seq,coalesce(rssi,'')) from ssid where is_processed=1 and seq is not null and  time != \"\" order by time limit 1;")
 es=$?
-arr=($row)
-if [[ -z ${arr} ]]
-then echo ending no seq_row 
+if [[ -z $row ]]
+then echo ending no seq_row
 echo ssid_2bursts-seq stop $(date +"%H:%M:%S.%3N")
 sleep 5
 return
 #exit 0
 fi
-ssid_hex=${arr[0]}
-wlan_sa=${arr[1]}
-time=${arr[2]}
-seq=${arr[3]}
-rssi=$(echo ${arr[4]} | cut -d, -f1)
+IFS='|' read -r ssid_hex wlan_sa time seq rssi <<< "$row"
+rssi=$(echo $rssi | cut -d, -f1)
+#a probe captured without radiotap has no rssi to correlate on; advance it out
+#of this stage rather than spinning on an unmatchable row
+if [[ -z $rssi ]]; then
+	mysql probeprint <<< "update ssid set is_processed=2 where wlan_sa = \"$wlan_sa\" and time = \"$time\";"
+	continue
+fi
 rssi_max=$(echo $rssi +2 |bc)
 rssi_min=$(echo $rssi -2 | bc)
 end_time=$(echo "scale=7;  $time + 1" | bc)
@@ -150,10 +153,7 @@ while read line;
 do
 #echo child PR with rssi_min max $line
 #sleep 1
-arr2=($line)
-ssid_hex2=${arr2[0]}
-wlan_sa2=${arr2[1]}
-time2=${arr2[2]}
+IFS='|' read -r ssid_hex2 wlan_sa2 time2 <<< "$line"
 #proc2=${arr2[4]}
 #append ssid of matching mac address to burst
 #unset IFS
@@ -175,7 +175,7 @@ final_time=$time2
 #echo will run  "update ssid set is_processed=2 where wlan_sa = \"$wlan_sa\" and time = \"$time\";"
 mysql probeprint <<< "update ssid set is_processed=2 where wlan_sa = \"$wlan_sa\" and time = \"$time\";"
 
-done <<<$(mysql -N probeprint <<< "SELECT ssid_hex,wlan_sa,time from ssid where time < \"$endtime\" and time > \"$begintime\" and seq >= \"$seq\" and seq <= \"$seq_end\" and rssi <= \"$rssi_max\" and rssi >= \"$rssi_min\" and time != \"\" order by time;")
+done <<<$(mysql -N probeprint <<< "SELECT concat_ws('|',ssid_hex,wlan_sa,time) from ssid where time < \"$endtime\" and time > \"$begintime\" and seq >= \"$seq\" and seq <= \"$seq_end\" and cast(rssi as signed) <= $rssi_max and cast(rssi as signed) >= $rssi_min and time != \"\" order by time;")
 
 bcount=${#burst[@]}
 if [[ $bcount -gt "1" ]]
@@ -231,21 +231,24 @@ ssid2bursts-vht () {
 #pull unproccessed SSID and break into array
 es=0
 until [[ $es -ne 0 ]]; do
-row=$(mysql -N probeprint <<< "select ssid_hex,wlan_sa,time,vht,rssi from ssid where is_processed=2 and time != \"\" order by time limit 1;")
+#see the concat_ws note in ssid2bursts-seq: an empty vht or rssi would shift
+#the columns under plain array splitting
+row=$(mysql -N probeprint <<< "select concat_ws('|',ssid_hex,wlan_sa,time,coalesce(vht,''),coalesce(rssi,'')) from ssid where is_processed=2 and time != \"\" order by time limit 1;")
 es=$?
-arr=($row)
-if [[ -z ${arr} ]]
-then echo ending no vht_row 
+if [[ -z $row ]]
+then echo ending no vht_row
 echo ssid_2bursts-vht stop $(date +"%H:%M:%S.%3N")
 sleep 50
 return
 #exit 0
 fi
-ssid_hex=${arr[0]}
-wlan_sa=${arr[1]}
-time=${arr[2]}
-vht=${arr[3]}
-rssi=$(echo ${arr[4]} | cut -d, -f1)
+IFS='|' read -r ssid_hex wlan_sa time vht rssi <<< "$row"
+rssi=$(echo $rssi | cut -d, -f1)
+#no vht tag or no rssi means nothing to correlate on for this method
+if [[ -z $rssi || -z $vht ]]; then
+	mysql probeprint <<< "update ssid set is_processed=3 where wlan_sa = \"$wlan_sa\" and time = \"$time\";"
+	continue
+fi
 rssi_max=$(echo $rssi +2 |bc)
 rssi_min=$(echo $rssi -2 | bc)
 end_time=$(echo "scale=7;  $time + 1" | bc)
@@ -257,10 +260,7 @@ while read line;
 do
 #echo child PR with rssi_min max $line
 #sleep 1
-arr2=($line)
-ssid_hex2=${arr2[0]}
-wlan_sa2=${arr2[1]}
-time2=${arr2[2]}
+IFS='|' read -r ssid_hex2 wlan_sa2 time2 <<< "$line"
 #append ssid of matching mac address to burst
 #unset IFS
 burst+=("$ssid_hex2")
@@ -281,7 +281,7 @@ final_time=$time2
 #echo will run  "update ssid set is_processed=2 where wlan_sa = \"$wlan_sa\" and time = \"$time\";"
 mysql probeprint <<< "update ssid set is_processed=3 where wlan_sa = \"$wlan_sa\" and time = \"$time\";"
 
-done <<<$(mysql -N probeprint <<< "SELECT ssid_hex,wlan_sa,time from ssid where time < \"$endtime\" and time > \"$begintime\" and vht = \"$vht\" and rssi <= \"$rssi_max\" and rssi >= \"$rssi_min\" and time != \"\" order by time;")
+done <<<$(mysql -N probeprint <<< "SELECT concat_ws('|',ssid_hex,wlan_sa,time) from ssid where time < \"$endtime\" and time > \"$begintime\" and vht = \"$vht\" and cast(rssi as signed) <= $rssi_max and cast(rssi as signed) >= $rssi_min and time != \"\" order by time;")
 
 bcount=${#burst[@]}
 if [[ $bcount -gt "1" ]]
@@ -397,10 +397,20 @@ done
 
 
 
+#NOT CURRENTLY WIRED UP: the call in build_bursts.sh is commented out, and this
+#function still has unresolved problems beyond the IFS scoping below --
+#`ssids=($(...))` splits a "time<TAB>ssids" result on ':' only, so ssids[0] holds
+#the timestamp glued to the first SSID by a tab rather than the timestamp alone,
+#and the loop indexes from 1 as though that were correct. There are also
+#unquoted `[ -n $ignore_check ]` tests and a `${ssids[$ssdi]}` typo. Left as
+#found rather than rewritten blind, since there is no test data for it.
 find_relatedbursts () {
 echo starting find_relatedbursts $(date +"%H:%M:%S.%3N")
 while true; do
-IFS=:;
+#`local IFS` so this cannot leak out into the other functions in this file --
+#they are all sourced into one shell, and a global IFS=: broke the tab-separated
+#mysql output the burst passes read.
+local IFS=:
 ###
 ###set related_burst to ignore for bursts of non-unique common ssids
 ###

@@ -3,11 +3,13 @@ source .env
 
 test_online () {
 
-	ping -c1 -q 4.2.2.2 >/dev/null && nslookup wigle.net >/dev/null
-	if [ $? -eq 0]
-	then 
+	#missing space before ] made this a "command not found" every time
+	if ping -c1 -q 4.2.2.2 >/dev/null 2>&1 && nslookup wigle.net >/dev/null 2>&1
+	then
 		echo has internet
+		return 0
 	fi
+	return 1
 
 }
 

@@ -33,7 +33,7 @@ categorize () {
 #while true;
 #do
 	echo categorize start $(date +"%H:%M:%S.%3N")
-	mysql probeprint <<< "update ssid_intel set category=\"OTHER_ANOMALOUS\" where ssid_hex like '%00' or ssid_hex like '%000%' or ssid_hex like '%fff%' or ssid_hex like '8%' or ssid_hex like '1%';"
+	mysql probeprint <<< "update ssid_intel set category=\"OTHER_ANOMALOUS\" where (ssid_hex like '%00' or ssid_hex like '%000%' or ssid_hex like '%fff%' or ssid_hex like '8%' or ssid_hex like '1%') and category is null;"
 	while read ssid_hex; 
 	do
  		ssid=$(echo -n $ssid_hex | xxd -r -p)
@@ -50,7 +50,7 @@ categorize () {
 				fi
  			done
 		done
-	done <<< $(mysql probeprint <<< "select ssid_hex from ssid_intel where category is null;")
+	done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where category is null;")
 #bug where next line is nullifed on ssids starting with special character
 	mysql probeprint <<< "update ssid_intel set category = \"OTHER_UNKNOWN\"  where category is null;"
 	echo categorize stop $(date +"%H:%M:%S.%3N")

@@ -1,45 +1,74 @@
 #!/bin/bash
-x=$*
+# Backfill the ssid table from saved capture files.
+#
+# Usage: ./pcap2db.sh <capture.pcap> [more.pcap ...]
+#
+# Rows imported from a file are tagged with that filename in ssid.tag, so a
+# backfilled batch can be told apart from live capture afterwards.
+source ./ingest_functions.sh
 
-has_radtap=$(tshark -a packets:1  -QVr $x -Y "wlan.fc.type_subtype == 4 and wlan.tag.length != 0" -T fields  -e wlan_radio.frequency | egrep '[0-9]' | wc -l)
-if [[ $has_radtap -eq 1 ]]
-then
-endtime=$(tshark -Vr $x -Y "wlan.fc.type_subtype == 4 and wlan.tag.length != 0" -T fields -e frame.time_epoch -E separator=\    | tail -n1)
-end_time=`echo "scale=7;  $endtime + .0001" | bc`
-begintime=$(tshark -Vr $x -Y "wlan.fc.type_subtype == 4 and wlan.tag.length != 0" -T fields -e frame.time_epoch -E separator=\    | head -n1 | cut -d. -f1)
-
-
-
-
-tshark -Vr $x -Y "wlan.fc.type_subtype == 4 and wlan.tag.length != 0" -T fields -e wlan.ssid -e wlan.sa -e frame.time_epoch -e radiotap.dbm_antsignal -e wlan_radio.frequency -e wlan.seq -e wlan.vht.capabilities -E separator=\  > /usr/src/probeprint/pipe &
-
-while read line; do
- arr=($line);
-echo ssid is ${arr[0]};
-echo sa is ${arr[1]}
-echo time is ${arr[2]}
-echo rssi is ${arr[3]}
-echo freq is ${arr[4]}
-echo seq is ${arr[5]}
-echo vht is ${arr[6]}
-#sqlite3 /usr/src/probeprint/new.db "INSERT OR IGNORE INTO ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht) values (\"${arr[0]}\",\"${arr[1]}\",\"${arr[2]}\",\"${arr[3]}\",\"${arr[4]}\",\"${arr[5]}\",\"${arr[6]}\");"
-mysql probeprint <<<"insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht) values (\"${arr[0]}\",\"${arr[1]}\",\"${arr[2]}\",\"${arr[3]}\",\"${arr[4]}\",\"${arr[5]}\",\"${arr[6]}\");"
-y=$?
-while [[ $y -ne 0 ]]; do
-	echo retry $(date) $line
-	sleep .2
-#	sqlite3 /usr/src/probeprint/new.db "INSERT OR IGNORE INTO ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht) values (\"${arr[0]}\",\"${arr[1]}\",\"${arr[2]}\",\"${arr[3]}\",\"${arr[4]}\",\"${arr[5]}\",\"${arr[6]}\");"
-mysql probeprint <<<"insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht) values (\"${arr[0]}\",\"${arr[1]}\",\"${arr[2]}\",\"${arr[3]}\",\"${arr[4]}\",\"${arr[5]}\",\"${arr[6]}\");"
-
-	y=$?
-done
-#sleep 3
-done < /usr/src/probeprint/pipe
-echo $begintime
-echo $end_time
-#sqlite3 /usr/src/probeprint/new.db "update ssid set tag=\"$x\" where time>\"$begintime\" and time < \"$end_time\";"
-sqlite3 /usr/src/probeprint/new.db "update ssid set tag=\"$x\" where time>$begintime and time < $end_time;"
-#echo sqlite3 /usr/src/probeprint/new.db \"update ssid set tag=$x where time\>$begintime and time \< $end_time\;\"
-else
-	echo $x has No radiotap headers
+if [ $# -eq 0 ]; then
+	echo "usage: $0 <capture.pcap> [...]" >&2
+	exit 1
 fi
+
+# Probe requests only, matching the live capture filter in build_ssid.sh
+# ("wlan subtype probe-req") so both ingest paths store the same set of rows.
+#
+# This previously read `... and wlan.tag.length != 0`. In Wireshark display
+# filter semantics `!=` means "no occurrence equals", not "some occurrence
+# differs", so that clause excluded any probe containing a zero-length IE --
+# which is every wildcard/broadcast probe. Live capture stored those as
+# <MISSING> while pcap import silently dropped them.
+PROBE_FILTER="wlan.fc.type_subtype == 4"
+
+for capture in "$@"; do
+	if [ ! -f "$capture" ]; then
+		echo "$capture: no such file" >&2
+		continue
+	fi
+
+	# Without radiotap there is no RSSI or channel, which the burst-grouping
+	# passes correlate on. The old check combined `-a packets:1` with a display
+	# filter and then tested `-eq 1`, so it reported "No radiotap headers" for
+	# any capture whose first frame was not itself a probe request.
+	has_radiotap=$(tshark -Qr "$capture" -Y "$PROBE_FILTER" \
+		-T fields -e wlan_radio.frequency 2>/dev/null | grep -cE '^[0-9]+$')
+
+	if [ "$has_radiotap" -eq 0 ]; then
+		echo "$capture has No radiotap headers"
+		continue
+	fi
+
+	# Window covering every probe in this file, used to tag the imported rows.
+	begintime=$(tshark -Qr "$capture" -Y "$PROBE_FILTER" -T fields \
+		-e frame.time_epoch 2>/dev/null | head -n1)
+	endtime=$(tshark -Qr "$capture" -Y "$PROBE_FILTER" -T fields \
+		-e frame.time_epoch 2>/dev/null | tail -n1)
+
+	if [ -z "$begintime" ] || [ -z "$endtime" ]; then
+		echo "$capture contains no probe requests"
+		continue
+	fi
+
+	# Widen the window slightly so the first and last rows fall inside it.
+	# The old version truncated begintime with `cut -d. -f1`, throwing away the
+	# fractional second.
+	begintime=$(echo "scale=7; $begintime - .0001" | bc)
+	endtime=$(echo "scale=7; $endtime + .0001" | bc)
+
+	echo "== importing $capture ($begintime .. $endtime) =="
+
+	# Straight pipe, rather than the old detour through a hardcoded
+	# /usr/src/probeprint/pipe fifo that existed only on the author's machine.
+	tshark -Qr "$capture" -Y "$PROBE_FILTER" "${PROBE_TSHARK_ARGS[@]}" 2>/dev/null \
+		| ingest_stream
+
+	# Tag the rows this file contributed. The previous version issued this as a
+	# `sqlite3 new.db` update -- a leftover from before the MariaDB migration --
+	# so the tag was never actually written to the live database.
+	mysql probeprint <<SQL
+update ssid set tag = "$capture"
+where time > "$begintime" and time < "$endtime" and tag is null;
+SQL
+done

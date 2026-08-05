@@ -1,0 +1,10 @@
+.git
+locs
+*.db
+*-wal
+*-shm
+pipe
+pipe_*
+.env
+test/out
+test/fixtures/*.pcap

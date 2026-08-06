@@ -29,6 +29,9 @@ categories["CULTURE_LUXURY"]="Estates;lux;yatch;social;marina;penthouse;jetex;gi
 source .env
 source ./vendor_functions.sh
 source ./rarity_functions.sh
+source ./industry_functions.sh
+source ./geolocate_functions.sh
+source ./location_functions.sh
 
 
 #functions
@@ -499,7 +502,9 @@ mysql probeprint <<< "update ssid_intel set category='CULTURE_EMOJI' where ssid_
 
 
 remove_empty_locs () {
-for a in `grep oo\ many locs/* | cut -d\: -f1`; do rm $a;done
+	# Retroactively drop quota-exhaustion bodies so those SSIDs retry next run.
+	# Single source of the cleanup, shared via location_functions.sh.
+	wigle_purge_quota_files
 }
 
 

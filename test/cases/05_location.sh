@@ -1,5 +1,5 @@
 #!/bin/bash
-# WiGLE location summarisation, entirely offline against canned API bodies.
+# WiGLE location summarization, entirely offline against canned API bodies.
 #
 # No test here may make a network call: locs/ is pre-populated by the
 # entrypoint, so wigle_fetch's `[ ! -f "$file" ]` guard short-circuits and curl

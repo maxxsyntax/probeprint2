@@ -1,0 +1,37 @@
+{
+  "success": true,
+  "totalResults": 3,
+  "resultCount": 3,
+  "results": [
+    {
+      "trilat": 48.85837009,
+      "trilong": 2.29448128,
+      "ssid": "CaseNet",
+      "qos": 7,
+      "country": "FR",
+      "region": "Ile-de-France",
+      "city": "Paris",
+      "road": "Avenue Gustave Eiffel"
+    },
+    {
+      "trilat": -33.86881700,
+      "trilong": 151.20929900,
+      "ssid": "casenet",
+      "qos": 5,
+      "country": "AU",
+      "region": "New South Wales",
+      "city": "Sydney",
+      "road": "George Street"
+    },
+    {
+      "trilat": 35.68950000,
+      "trilong": 139.69170000,
+      "ssid": "CASENET",
+      "qos": 6,
+      "country": "JP",
+      "region": "Tokyo",
+      "city": "Shinjuku",
+      "road": "Yasukuni Dori"
+    }
+  ]
+}

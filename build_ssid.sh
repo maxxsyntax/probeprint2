@@ -28,6 +28,15 @@ while true; do
 		./summarize_location.sh --new
 	fi
 
+	# Geolocation is off during capture by default and belongs in a post-capture
+	# pass -- every provider is rate limited, and blocking the ingest loop on a
+	# network round trip costs frames. Set geo_online=1 in .env only if you need
+	# coordinates live on the display; it reads the locs/ cache and makes no
+	# calls of its own.
+	if [ "${geo_online:-0}" = "1" ]; then
+		./standalone_geolocate.sh >/dev/null 2>&1
+	fi
+
 	sleep .1
 done
 }

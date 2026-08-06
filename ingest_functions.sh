@@ -52,6 +52,7 @@ PROBE_TSHARK_ARGS=(
     -e wlan.extcap
     -e wlan.tag.oui
     -e wlan.tag.number
+    -e wlan.da
     -E "separator=$PROBE_SEP"
 )
 
@@ -62,10 +63,10 @@ PROBE_TSHARK_ARGS=(
 # to mysql, which is how the distributed nodes target the central server
 # (ingest_stream -u pi -h 192.168.1.10).
 ingest_stream () {
-    local ssid_hex wlan_sa time rssi freq seq vht ht extcap vendor_oui ie_order
+    local ssid_hex wlan_sa time rssi freq seq vht ht extcap vendor_oui ie_order wlan_da
 
     while IFS="$PROBE_SEP" read -r ssid_hex wlan_sa time rssi freq seq vht \
-                                   ht extcap vendor_oui ie_order; do
+                                   ht extcap vendor_oui ie_order wlan_da; do
         # tshark emits a trailing blank line at the end of each capture window,
         # and a row with no timestamp is not a usable observation.
         [ -z "$time" ] && continue
@@ -83,7 +84,7 @@ ingest_stream () {
         else
             # A wildcard probe with a zero-length SSID. tshark reports the
             # literal string <MISSING>, and downstream queries filter on it,
-            # so it is stored verbatim rather than normalised to NULL.
+            # so it is stored verbatim rather than normalized to NULL.
             echo "Broadcast Detected $wlan_sa time is $time $rssi seq is $seq"
         fi
 
@@ -95,11 +96,12 @@ ingest_stream () {
         # failing insert in a loop, which can never succeed and span forever.
         mysql "$@" probeprint <<SQL
 insert ignore into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht,
-                         ht, extcap, vendor_oui, ie_order)
+                         ht, extcap, vendor_oui, ie_order, wlan_da)
 values ("$ssid_hex", "$wlan_sa", "$time", "$rssi",
         nullif("$freq", ''), nullif("$seq", ''), "$vht",
         nullif("$ht", ''), nullif("$extcap", ''),
-        nullif("$vendor_oui", ''), nullif("$ie_order", ''));
+        nullif("$vendor_oui", ''), nullif("$ie_order", ''),
+        nullif("$wlan_da", ''));
 SQL
     done
 }

@@ -13,8 +13,8 @@ Working notes behind the fingerprinting passes. Sources are three papers kept in
 
 ## Which Information Elements actually discriminate
 
-Pintor 2022 measured this directly: 22 devices, 18 of which randomise their MAC,
-315 captures of 20 minutes each, across six behavioural modes (screen on/off ×
+Pintor 2022 measured this directly: 22 devices, 18 of which randomize their MAC,
+315 captures of 20 minutes each, across six behavioral modes (screen on/off ×
 connected/not × power-saving). Random Forest Gini importance, mode A:
 
 | IE | Name | % of frames | Gini | Captured here |
@@ -117,7 +117,7 @@ present: `ssid_intel.rarity` and per-device SSID sets from `ssid.device_id`.
 ## Sequence-number graphs beat sequence-number windows
 
 Cheshire 2019 exploits the fact that the 12-bit sequence counter in the MAC
-header **is not reset when a device rotates its randomised MAC address**. Their
+header **is not reset when a device rotates its randomized MAC address**. Their
 graph:
 
 - nodes are probe requests
@@ -127,7 +127,7 @@ graph:
   both dimensions
 
 Connected components are devices. They measured wrap-around at 4096 causing a
-split in only **0.5%** of a Google-randomised sample.
+split in only **0.5%** of a Google-randomized sample.
 
 **Why this mattered here:** the old `ssid2bursts-seq` searched a fixed
 one-second box for probes with `seq` within +60 and RSSI within ±2. It could
@@ -138,12 +138,86 @@ component ids to `ssid.device_id`. Defaults: `SEQGRAPH_ALPHA=90` seconds (Cunche
 measured 50–60s between bursts from one device), `SEQGRAPH_BETA=400`. Both
 tunable from `.env`.
 
+### Identity, and why the alias is not the identity
+
+`devices.id` is an autoincrement surrogate key. `devices.device_key` is derived
+from the component's **earliest observation** — `substr(md5(anchor_time),1,16)`
+— which makes it merge-stable: when two components join, the merged component's
+earliest frame belongs to whichever started first, so that key survives and the
+other is absorbed. Two analysts recomputing independently get the same keys.
+
+An earlier scheme used the per-run array index (`dev-%06d`). It was not stable:
+incremental runs restarted the index at zero and reissued ids already in use, so
+unrelated devices shared one. Reproduced and fixed.
+
+`devices.alias` is an adjective-noun handle from `lists/adjectives.txt` ×
+`lists/nouns.txt` (347 × 282 = 97,854 combinations; 50% chance of a duplicate at
+368 devices, handled with a numeric discriminator). It exists because an
+operator in a room can hold "Brave Falcon" in their head and cannot hold
+`device 4127`. It is a **non-key attribute** and nothing joins on it.
+
+Two deliberate choices. The name is derived from `device_key`, so a recompute
+never renames a device — a memorable name that silently changes is worse than a
+number, because it manufactures false confidence in continuity. And the name is
+**stored, not recomputed on read**, so two devices can never display the same
+handle.
+
+An earlier idea was to source the noun from the device *class* so that same-model
+devices shared a noun. Dropped: `ie_fp` says two devices are the same class, not
+*which* class, and there is no public corpus mapping 802.11 probe IE signatures
+to models. Naming a slot after something unresolvable makes the name arbitrary
+while implying it is not. Vendor — which *is* partially resolvable, from a
+non-randomized MAC OUI or the IE 221 vendor OUI — is shown as its own field.
+
+### Burst-derived features: weak as identity, useful as a gate
+
+Pintor 2022 §V.C computed exactly the burst-level features that look promising —
+"the number of packets sent in a burst, the difference between the
+first-intra-burst sequence number and the last one, and other characteristics" —
+and clustering on them was **worse** than per-frame. So burst structure is not
+built here as a competing identity signal. Two better uses:
+
+- **Gate the graph's edges.** `SEQGRAPH_GATE_IE=1` refuses an edge between two
+  frames whose IE fingerprints positively disagree, since one device cannot
+  change its signature mid-capture. This converts the confidence flag from
+  after-the-fact detection into prevention. Measured on the test fixtures: two
+  interleaved real devices merge without it and stay separate with it.
+- **Behavioral state.** The intra-burst sequence delta is a clean
+  associated/unassociated discriminator — if N probes advance the counter by
+  exactly N−1 the device is sending nothing else. Combined with Pintor's finding
+  that probe rate tracks screen state, that is an attention signal, orthogonal
+  to identity.
+
+Not yet done: burst detection itself is still a fixed one-second window from an
+arbitrary anchor frame, which splits bursts straddling the boundary and merges
+adjacent ones. `burst_size` and `burst_duration` are therefore partly artifacts
+of the window. Gap-based detection would fix it, and should land before either
+is trusted as a feature.
+
+### Static MACs are free ground truth
+
+The minority of devices that do not randomize are the most useful thing in a
+capture, and not as a fingerprint. For them the MAC *is* the identity, with no
+inference, which makes them labeled data present in every real capture:
+
+- two globally-unique MACs in one cluster → **provable false merge**
+- one globally-unique MAC across two clusters → **provable false split**
+
+`seqgraph_validate` (`standalone_seqgraph.sh --validate`) scores the clustering
+against them and prints both rates plus the offending MACs. That is a measured
+error rate at the current α/β in the real environment, rather than a number from
+a synthetic fixture, and it is the right way to tune α and β per site.
+
+Randomized addresses are the locally-administered ones — bit 1 of the first
+octet set, bit 0 clear for a unicast source — so the second hex digit is one of
+`2`, `6`, `a`, `e`. This is Cheshire's shortcut.
+
 ### Its real failure mode
 
 The test fixtures surfaced this by accident and it is worth recording. Given 19
 unrelated devices — different MACs, different SSIDs — that happened to be
 stamped within 18 microseconds of each other with sequential sequence numbers,
-the graph merged all 19 into a single device. That is correct behaviour on
+the graph merged all 19 into a single device. That is correct behavior on
 incoherent input, but it is exactly what a dense environment produces: **in a
 crowded space, unrelated devices whose sequence counters happen to interleave
 inside α will be falsely merged.**
@@ -199,15 +273,18 @@ devices.
 
 Roughly in descending order of value for this engagement:
 
-1. **Psim-3 PNL linkage** (Cunche 2012) — links *people*, not devices. All
-   inputs now exist. This is the highest-value remaining gap.
+1. **Psim-3 PNL linkage** (Cunche 2012) — links *people*, not devices. Every
+   input now exists as a table: `device_ssid` holds each device's list and
+   `ssid_intel.rarity` holds the per-SSID weight, so the metric is a join away:
+   `Psim-3(X,Y) = Σ 1/f(z)³` over the SSIDs two devices share. This is the
+   highest-value remaining gap.
 2. **Wi-Fi ↔ Bluetooth correlation** — the stated goal in `../idea.txt`, still
    entirely unimplemented. Correlate by co-presence window, RSSI correlation and
    joint appear/disappear. BLE frequently carries a real human name where Wi-Fi
    does not.
 3. **Multi-node trilateration** — `client/` already deploys three capture nodes
    writing to one database. The capability is latent and unused.
-4. **Timing and behavioural signal** — inter-burst interval, frames per burst,
+4. **Timing and behavioral signal** — inter-burst interval, frames per burst,
    channel rotation order are all driver and chipset specific. Pintor's six
    modes show probe rate changes with screen state, which makes it an
    attention signal, not just a presence signal.
@@ -215,7 +292,7 @@ Roughly in descending order of value for this engagement:
    captured but nothing consumes it yet beyond the `ie_fp` hash.
 6. **PHY-layer fingerprinting** — scrambler seed (Vo-Huu 2016, Bloessl 2015),
    clock skew / carrier frequency offset, IQ imbalance. Survives MAC
-   randomisation *and* IE homogenisation. Requires an SDR, not commodity
+   randomization *and* IE homogenisation. Requires an SDR, not commodity
    monitor mode. Out of scope for this hardware.
 
 ### On RSSI
@@ -241,3 +318,47 @@ is a real tradeoff for anything driving a live display.
 `display.sh` currently thresholds RSSI at fixed values (−66, −82 dBm) to bucket
 devices as near / medium / far. Per the above that is unreliable across sites;
 a distribution break would travel better.
+
+---
+
+## Geography in a conference capture: dispersion, not coherence
+
+An earlier draft of this document proposed treating a geographically tight PNL
+as the signal and a distant SSID as a probable false match. **That is wrong for
+this dataset and worth recording so it is not proposed again.**
+
+Much of the collection is taken at conferences. Attendees fly thousands of
+kilometres to be there, and their preferred network lists carry venues from past
+conferences on other continents. A coherent cluster is not the expected shape,
+and a distant SSID is frequently the most informative entry rather than noise.
+
+What actually works on travel-heavy data:
+
+- **Partition the PNL by category before doing any geometry.** The categories
+  already exist. Residential and `NAME`-bearing SSIDs cluster around a home;
+  `BIZ_HOTEL`, `TRAVEL` and `is_airport` entries are a trajectory;
+  `BIZ_INSTITUTION` / `INDUSTRY_ORG` point at an employer. Averaging all three
+  together yields a coordinate in the ocean.
+- **Dispersion is itself a feature.** A list spanning three continents marks a
+  frequent international traveller; one confined to a single metro marks a
+  local. That is a useful segmentation at a conference, where both are present.
+- **Shared *distant* venues are the strong link.** Two attendees who both probe
+  for the same past conference SSID, or the same hotel in another country, have
+  correlated travel history. Those SSIDs are globally rare, so Cunche's rarity
+  weighting already scores them highly — the metric works here unchanged.
+- **Home location still resolves**, but only from the residential partition.
+
+### Local frequency, not just global rarity
+
+One correction the conference setting forces on the rarity metric. `rarity` is
+derived from `lists/ssid.csv`, a *global* sighting count. The conference's own
+SSID is globally rare — few APs, short-lived — so it scores high, yet every
+attendee in the room probes for it, which makes it worthless for telling them
+apart.
+
+The fix is a second term: document frequency within the capture itself. An SSID
+probed by most devices present should be discounted regardless of its global
+rarity, which is ordinary TF-IDF with the local capture as the corpus.
+`make_ignore_list` gestures at this with a fixed threshold of 40 distinct MACs;
+a continuous local-frequency weight alongside the global one would be correct.
+Not implemented.

@@ -1,0 +1,37 @@
+{
+  "success": true,
+  "totalResults": 3,
+  "resultCount": 3,
+  "results": [
+    {
+      "trilat": 41.79020000,
+      "trilong": -87.59970000,
+      "ssid": "CampusNet",
+      "qos": 7,
+      "country": "US",
+      "region": "IL",
+      "city": "Chicago",
+      "road": "South Ellis Avenue"
+    },
+    {
+      "trilat": 41.79140000,
+      "trilong": -87.60050000,
+      "ssid": "CampusNet",
+      "qos": 6,
+      "country": "US",
+      "region": "IL",
+      "city": "Chicago",
+      "road": "East 58th Street"
+    },
+    {
+      "trilat": 41.78990000,
+      "trilong": -87.60110000,
+      "ssid": "campusnet",
+      "qos": 5,
+      "country": "US",
+      "region": "IL",
+      "city": "Chicago",
+      "road": "South University Avenue"
+    }
+  ]
+}

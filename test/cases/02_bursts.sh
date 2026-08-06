@@ -45,7 +45,7 @@ assert_not_contains "seq pass produced no SQL error" \
     "ERROR" "$(cat /tmp/burst_seq.log)"
 
 # The three SeqBurst* rows share an RSSI band and fall inside the +60 sequence
-# window, so they group despite having randomised (distinct) MAC addresses.
+# window, so they group despite having randomized (distinct) MAC addresses.
 assert_eq "seq pass created at least one burst" \
     "1" "$(sq1 "select least(count(*),1) from bursts where bmethod='seq';")"
 

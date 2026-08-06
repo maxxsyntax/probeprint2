@@ -1,9 +1,9 @@
 #!/bin/bash
-# WiGLE location lookup and summarisation.
+# WiGLE location lookup and summarization.
 #
 # Shared by summarize_location.sh (single SSID / incremental, called from the
 # live capture loop) and standalone_summarize_loc.sh (bulk sweep). The jq
-# summarisation logic previously existed in three places -- an old grep -A 22
+# summarization logic previously existed in three places -- an old grep -A 22
 # version in ssid_intel_functions.sh, a rewritten jq version in
 # standalone_summarize_loc.sh, and a third copy in summarize_location.sh whose
 # database writes were commented out, so it computed a result and discarded it.
@@ -67,7 +67,7 @@ summarize_one () {
 	# A quota-exhausted body has no totalResults at all, so check success first
 	# rather than letting jq return the string "null" into an arithmetic test.
 	if grep -q 'oo many' "$file" 2>/dev/null; then
-		echo "$ssid_hex (quota exhausted, not summarised)"
+		echo "$ssid_hex (quota exhausted, not summarized)"
 		return 1
 	fi
 

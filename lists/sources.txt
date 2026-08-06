@@ -4,3 +4,6 @@
 ##https://data.iana.org/TLD/tlds-alpha-by-domain.txt
 #https://wigle.net/csv/ssid.csv
 #https://standards-oui.ieee.org/oui/oui.csv
+#adjectives.txt / nouns.txt - hand-curated for device alias generation
+#  (seqgraph_functions.sh:assign_aliases). Not sourced from anywhere; chosen to
+#  be neutral, short, and unambiguous when read aloud. 347 x 282 = 97,854 names.

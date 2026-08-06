@@ -1,0 +1,135 @@
+# Consumer-premises-equipment SSID keyword -> operator -> market.
+#
+# format: keyword|operator|countries|scope
+#
+# scope tells you how much the match is worth:
+#   country  one national market. The strongest residential-origin signal this
+#            pipeline produces -- a device probing for a Bouygues Bbox has a
+#            home connection in France.
+#   region   one operator across a coherent set of markets (Telefonica across
+#            Iberia and Latin America). Narrows to a region, not a country.
+#   global   present in many unrelated markets. Nearly worthless for origin.
+#   vendor   a hardware manufacturer, not an operator. Carries NO geography --
+#            listed so the pass can refuse to claim one.
+#   academic not CPE at all, but a strong affiliation signal.
+#
+# Keywords are matched case-insensitively as substrings of the decoded SSID,
+# matching how categorize() works. They are literals to be matched against
+# names on the air, so they are exempt from the American English rule.
+#
+# Sources: operator brand names for default router SSIDs. Where an operator
+# trades under one brand in several countries the countries are listed and the
+# scope is 'region' rather than 'country'.
+
+# --- single national market -------------------------------------------------
+TeleCable|Telecable|ES|country
+Hyperoptic|Hyperoptic|GB|country
+BTHub|BT|GB|country
+Bbox|Bouygues Telecom|FR|country
+Freebox|Free (Iliad)|FR|country
+FREEBOX_|Free (Iliad)|FR|country
+BSNL|BSNL|IN|country
+TurkNet|TurkNet|TR|country
+CBCI|Charter Spectrum|US|country
+CenturyLink|CenturyLink / Lumen|US|country
+ChinaNet|China Telecom|CN|country
+FASTWEB|Fastweb|IT|country
+Fibertel|Fibertel (Telecom Argentina)|AR|country
+Fios|Verizon Fios|US|country
+Frontier|Frontier Communications|US|country
+KT_GiGA|KT Corporation|KR|country
+MEO_|MEO (Altice Portugal)|PT|country
+MyAltice|Altice USA|US|country
+MySpectrum|Charter Spectrum|US|country
+SpectrumSetup|Charter Spectrum|US|country
+Ziggo|VodafoneZiggo|NL|country
+TELUS|Telus|CA|country
+SINGTEL|Singtel|SG|country
+CoxWiFi|Cox Communications|US|country
+attwifi|AT&T|US|country
+ATTfiber|AT&T|US|country
+MEGACABLE|Megacable|MX|country
+CDMX-Internet|Mexico City public wifi|MX|country
+Telekom-|Deutsche Telekom|DE|country
+NextGenTel|NextGenTel|NO|country
+Xfinity|Comcast Xfinity|US|country
+LinkNYC|LinkNYC (New York City)|US|country
+Proximus|Proximus|BE|country
+MiFibra|Movistar / Orange fiber|ES|country
+TURBONETT|Turbonett|CO|country
+Verizion|Verizon (misspelled default)|US|country
+
+# --- one operator, several markets ------------------------------------------
+MOVISTAR|Telefonica Movistar|ES,AR,CL,CO,PE,MX,UY,VE|region
+CLARO|Claro (America Movil)|BR,MX,AR,CL,CO,PE,DO,GT|region
+Claro-|Claro (America Movil)|BR,MX,AR,CL,CO,PE,DO,GT|region
+tigo|Tigo (Millicom)|CO,GT,SV,HN,PY,BO,TZ|region
+Livebox|Orange|FR,ES,PL,RO,MD|region
+livebox|Orange|FR,ES,PL,RO,MD|region
+skyfi|Sky|GB,IE,IT,DE|region
+
+# --- too many markets to narrow ---------------------------------------------
+Vodafone|Vodafone|many|global
+Starlink|SpaceX Starlink|many|global
+eduroam|academic roaming federation|many|academic
+
+# --- hardware vendors: no geography -----------------------------------------
+ARRIS||none|vendor
+NETGEAR||none|vendor
+ORBI|NETGEAR Orbi|none|vendor
+Linksys||none|vendor
+TP-Link||none|vendor
+TP_Link_||none|vendor
+Zyxel_||none|vendor
+Buffalo||none|vendor
+H3C_||none|vendor
+Nokia_||none|vendor
+FRITZ!Box|AVM|none|vendor
+ubnt|Ubiquiti|none|vendor
+2WIRE||none|vendor
+MOTO|Motorola|none|vendor
+Redmi|Xiaomi|none|vendor
+MIWIFI|Xiaomi|none|vendor
+
+# --- found by mining the residual OTHER_UNKNOWN set on a real collection -----
+Ukrtelecom|Ukrtelecom|UA|country
+Beeline|Beeline (VimpelCom)|RU,KZ,UZ,KG,GE|region
+SkyWiFi|Sky|GB,IE,IT,DE|region
+Rostelecom|Rostelecom|RU|country
+Orange-|Orange|FR,ES,PL,RO,BE|region
+SFR|SFR|FR|country
+NOS-|NOS|PT|country
+Vivo-|Vivo (Telefonica Brasil)|BR|country
+Izzi|Izzi Telecom|MX|country
+Totalplay|Totalplay|MX|country
+INFINITUM|Telmex Infinitum|MX|country
+KOLBI|Kolbi ICE|CR|country
+Tigo-|Tigo (Millicom)|CO,GT,SV,HN,PY,BO|region
+Jazztel|Jazztel|ES|country
+Digi_|DIGI|ES,RO,HU|region
+UPC|UPC|CH,PL,AT|region
+A1-|A1 Telekom|AT,BG,HR,SI,RS|region
+Iliad|Iliad|FR,IT|region
+Optus|Optus|AU|country
+Telstra|Telstra|AU|country
+Spark-|Spark|NZ|country
+SKB|SK Broadband|KR|country
+Softbank|SoftBank|JP|country
+Aterm|NEC Aterm (JP retail default)|JP|country
+Buffalo-|Buffalo (JP retail default)|JP|country
+
+# --- more hardware vendors: no geography ------------------------------------
+Tenda||none|vendor
+Mercury||none|vendor
+Mercusys||none|vendor
+ZTE||none|vendor
+Cisco||none|vendor
+D-Link||none|vendor
+DLink||none|vendor
+Tplink||none|vendor
+Xiaomi||none|vendor
+HUAWEI-||none|vendor
+Technicolor||none|vendor
+Sagemcom||none|vendor
+Askey||none|vendor
+Comtrend||none|vendor

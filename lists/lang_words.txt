@@ -1,0 +1,234 @@
+# Language markers for Latin-script SSIDs.
+#
+# format: word|languages|scope
+#
+# check_language() in ssid_intel_functions.sh detects languages by SCRIPT --
+# it matches UTF-8 byte ranges for Cyrillic, Arabic, Hebrew, Kana, Hangul and
+# Greek. That leaves every Latin-script language completely invisible: a German
+# or Spanish SSID written in ASCII is indistinguishable from an English one to
+# that pass. On one real collection it found 15 Kanji and 1 Greek across the
+# entire corpus while thousands of Spanish and German names sat in
+# OTHER_UNKNOWN. This list closes that gap.
+#
+# scope decides how strong a claim the match supports:
+#   language   distinctive to one language. Sufficient on its own.
+#   family     shared across a language family -- 'casa' is Spanish, Italian,
+#              Portuguese and Romanian. Narrows to the family, not the language.
+#   ambiguous  also an ordinary English word, or shared across unrelated
+#              families. Recorded but never sufficient by itself, because SSIDs
+#              are mostly English and a false positive here invents a
+#              nationality for somebody.
+#
+# Vocabulary is chosen for the domain SSIDs actually use -- home, family,
+# network, guest, rooms, colors, pets -- not general word frequency. Accented
+# and unaccented spellings are both listed because router config screens
+# frequently strip diacritics.
+#
+# Words shorter than four characters are only included when highly distinctive,
+# since short tokens collide with everything.
+
+# --- German -----------------------------------------------------------------
+haus|de|language
+wohnung|de|language
+netzwerk|de|language
+zuhause|de|language
+gaeste|de|language
+gäste|de|language
+wohnzimmer|de|language
+schlafzimmer|de|language
+kueche|de|language
+küche|de|language
+keller|de|language
+garten|de|family
+drucker|de|language
+meine|de|language
+mein|de|language
+kinder|de|language
+schnell|de|language
+blau|de|language
+gruen|de|language
+grün|de|language
+schwarz|de|language
+weiss|de|language
+hund|de|family
+katze|de|language
+buero|de|language
+büro|de|language
+dachboden|de|language
+heim|de|family
+
+# --- Dutch ------------------------------------------------------------------
+huis|nl|language
+thuis|nl|language
+netwerk|nl|language
+woonkamer|nl|language
+slaapkamer|nl|language
+keuken|nl|language
+zolder|nl|language
+tuin|nl|language
+mijn|nl|language
+gasten|nl|language
+beneden|nl|language
+boven|nl|language
+blauw|nl|language
+groen|nl|language
+straat|nl|family
+
+# --- Spanish ----------------------------------------------------------------
+familia|es,pt,ro|family
+hogar|es|language
+invitados|es|language
+vecinos|es|language
+cocina|es|language
+comedor|es|language
+habitacion|es|language
+habitación|es|language
+cuarto|es,pt|family
+abajo|es|language
+arriba|es|language
+oficina|es|language
+tienda|es|language
+pueblo|es|language
+calle|es|language
+azul|es,pt|family
+verde|es,pt,it|family
+negro|es|family
+blanco|es|family
+perro|es|language
+gato|es,pt|family
+casita|es|language
+mi_red|es|language
+nuestra|es|language
+
+# --- Portuguese -------------------------------------------------------------
+rede|pt|language
+minha|pt|language
+cozinha|pt|language
+escritorio|pt|language
+escritório|pt|language
+quarto|pt|language
+cachorro|pt|language
+vizinhos|pt|language
+casinha|pt|language
+
+# --- French -----------------------------------------------------------------
+maison|fr|language
+famille|fr|language
+reseau|fr|language
+réseau|fr|language
+cuisine|fr|language
+jardin|fr,es|family
+salon|fr|family
+invites|fr|language
+invités|fr|language
+appartement|fr|language
+chambre|fr|language
+bureau|fr|family
+chien|fr|language
+bleu|fr|language
+
+# --- Italian ----------------------------------------------------------------
+famiglia|it|language
+casamia|it|language
+cucina|it|language
+giardino|it|language
+ufficio|it|language
+ospiti|it|language
+stanza|it|language
+soggiorno|it|language
+gatto|it|language
+azzurro|it|language
+
+# --- Polish and West Slavic --------------------------------------------------
+rodzina|pl|language
+mieszkanie|pl|language
+kuchnia|pl|language
+ogrod|pl|language
+ogród|pl|language
+goscie|pl|language
+goście|pl|language
+niebieski|pl|language
+zielony|pl|language
+domek|pl|language
+siec|pl|language
+sieć|pl|language
+rodina|cs,sk|family
+byt|cs,sk|family
+zahrada|cs,sk|family
+kuchyne|cs,sk|family
+
+# --- Turkish ----------------------------------------------------------------
+aile|tr|language
+misafir|tr|language
+mutfak|tr|language
+bahce|tr|language
+bahçe|tr|language
+oturma|tr|language
+yesil|tr|language
+yeşil|tr|language
+kopek|tr|language
+köpek|tr|language
+
+# --- Nordic -----------------------------------------------------------------
+hjem|da,no|family
+hjemme|da,no|family
+nettverk|no|language
+natverk|sv|language
+nätverk|sv|language
+familj|sv|language
+koket|sv|language
+köket|sv|language
+tradgard|sv|language
+trädgård|sv|language
+kjokken|no|language
+lagenhet|sv|language
+lägenhet|sv|language
+
+# --- Finnish ----------------------------------------------------------------
+koti|fi|language
+perhe|fi|language
+verkko|fi|language
+keittio|fi|language
+keittiö|fi|language
+puutarha|fi|language
+
+# --- Romanian ---------------------------------------------------------------
+retea|ro|language
+rețea|ro|language
+bucatarie|ro|language
+bucătărie|ro|language
+apartament|ro,pl|family
+
+# --- Hungarian --------------------------------------------------------------
+csalad|hu|language
+család|hu|language
+halozat|hu|language
+hálózat|hu|language
+lakas|hu|language
+lakás|hu|language
+
+# --- Indonesian / Malay ------------------------------------------------------
+rumah|id,ms|family
+keluarga|id,ms|family
+jaringan|id,ms|family
+kamar|id|language
+
+# --- Vietnamese --------------------------------------------------------------
+nhacua|vi|language
+giadinh|vi|language
+
+# --- ambiguous: also ordinary English, or shared far too widely --------------
+# Recorded so a match can be noted, but never sufficient on its own.
+casa|es,it,pt,ro|family
+familie|de,nl,da,no,ro|family
+dom|pl,cs,ru,sk,hr|ambiguous
+red|es|ambiguous
+net|nl|ambiguous
+van|nl|ambiguous
+sala|es,pt,it,pl|ambiguous
+rete|it|ambiguous
+mia|it|ambiguous
+mio|it|ambiguous
+chez|fr|ambiguous
+hus|da,no,sv|ambiguous
+hem|sv|ambiguous

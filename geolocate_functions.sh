@@ -68,9 +68,16 @@ geo_uridecode () {
 # geo_locs_file <ssid_hex>
 # Echo the cache file for this SSID under either naming convention, or nothing.
 geo_locs_file () {
-	local hex=$1 f uri
+	local hex=$1 f uri plain
 	f="$GEO_LOCS_DIR/$hex.location"
 	[ -f "$f" ] && { printf '%s' "$f"; return 0; }
+
+	# An SSID containing a null byte cannot appear in a filename under either of
+	# the text conventions, so stop before decoding it. Without this guard bash
+	# emits "command substitution: ignored null byte in input" once per lookup;
+	# on a real collection that buried the pass's own output under thousands of
+	# warnings and made a 30-minute run look like a hang.
+	case "$hex" in *00*) return 1 ;; esac
 
 	uri=$(printf '%s' "$hex" | xxd -r -p 2>/dev/null | jq -sRr @uri 2>/dev/null)
 	# jq -sRr @uri keeps the trailing newline from the slurp; strip it.
@@ -79,7 +86,6 @@ geo_locs_file () {
 		printf '%s' "$GEO_LOCS_DIR/$uri.location"; return 0; }
 
 	# Plain text needing no escaping.
-	local plain
 	plain=$(printf '%s' "$hex" | xxd -r -p 2>/dev/null)
 	[ -n "$plain" ] && [ -f "$GEO_LOCS_DIR/$plain.location" ] && {
 		printf '%s' "$GEO_LOCS_DIR/$plain.location"; return 0; }
@@ -107,6 +113,7 @@ geo_import_locs_cache () {
 	local f base decoded hexname urihex chosen ssids
 	local as_hex=0 as_uri=0 unresolved=0 inserted=0 already=0
 
+	local _sqlf; _sqlf=$(mktemp)
 	{
 		echo "start transaction;"
 		for f in "$dir"/*.location; do
@@ -148,7 +155,9 @@ geo_import_locs_cache () {
 			inserted=$((inserted+1))
 		done
 		echo "commit;"
-	} | mysql probeprint
+	} > "$_sqlf"
+	mysql probeprint < "$_sqlf"
+	rm -f "$_sqlf"
 
 	echo "  cache files read as hex-named  : $as_hex"
 	echo "  cache files read as URI-named  : $as_uri"

@@ -32,6 +32,9 @@ If the daemon is not running: `sudo systemctl start docker`.
 | `10_display` | Display layer queries MariaDB not sqlite, and surfaces alias + confidence + rarity |
 | `11_pnl_validate` | The preferred network list attached to each device, `pnl_rarity`, and the static-MAC accuracy harness detecting a real false merge and split |
 | `12_geolocate` | Coordinates extracted from the WiGLE cache offline, multi-location SSIDs correctly refused, BSSID harvesting from directed probes, and both network providers refusing to guess |
+| `13_recategorize` | Second-pass categorization of OTHER_UNKNOWN: operator brands, router name shapes, workplace and residence markers, and vendors never implying a location |
+| `14_language` | Language from vocabulary for Latin-script SSIDs: single-language vs family scope, whole-token matching, conflicting markers refused |
+| `15_inrange` | The in-range operator display: one profile per device assembled from its PNL, low-confidence merges flagged before the profile, char(31) separator safe against pipes in SSIDs |
 
 ## Rules
 

@@ -186,10 +186,11 @@ mysql probeprint -e "alter table ssid_intel add column if not exists geo_accurac
 #                         only meaningful if they sit close together.
 #   geo_match_count = 0   WiGLE knows the name only in other letter cases.
 #
-# This is a strictly better signal than ssid_intel.is_oneloc, which keys on
-# WiGLE's totalResults == 1 -- a case-insensitive count that conflates
-# "MyNet" with "mynet". is_oneloc is left as it is so existing rows keep their
-# meaning, but prefer geo_match_count.
+# ssid_intel.is_oneloc is now derived from this column rather than from WiGLE's
+# case-insensitive totalResults, so the two always agree; see derive_is_oneloc
+# in geolocate_functions.sh. Rows written by the old heuristic are stale until
+# ./standalone_oneloc.sh --recompute has run, and so are the scores computed
+# from them.
 mysql probeprint -e "alter table ssid_intel add column if not exists geo_match_count int default null;"
 
 # ---------------------------------------------------------------------------

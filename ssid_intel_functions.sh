@@ -158,6 +158,15 @@ done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where ssid_h
 # complete token, delimited by a word boundary -- the start or end of the SSID,
 # or a separator byte (space, -, _, .). Decode each SSID once, split it into
 # tokens, and compare whole tokens against the name set.
+#
+# Two refinements make it match how people actually name devices:
+#   - Capitalization is the signal that a token is a person's name rather than a
+#     common word. A name token must start with an uppercase letter (Maria,
+#     MARIA), so "guest", "home", "portal" are never read as names.
+#   - A trailing possessive "s" without an apostrophe is stripped: "Marias
+#     iPhone" -> Maria. The full token is checked first, so real names that end
+#     in s (Chris, James) still match as themselves.
+# lists/names.txt is Title Case; store it lowercased and compare case-insensitively.
 local -A nameset=()
 local nm
 while read -r nm; do
@@ -166,17 +175,25 @@ while read -r nm; do
 	[ ${#nm} -ge 3 ] && nameset[$nm]=1
 done < lists/names.txt
 
-local ssid t tl esc
+local ssid t tl match esc
 local -a toks
 while read -r ssid_hex; do
 	ssid=$(printf '%s' "$ssid_hex" | xxd -r -p 2>/dev/null | tr -cd '[:print:]')
 	# IFS scoped to this read only, so it cannot leak into other functions.
 	IFS=' -_.' read -r -a toks <<< "$ssid"
 	for t in "${toks[@]}"; do
+		# Require an uppercase initial: a name is a proper noun.
+		[[ $t == [A-Z]* ]] || continue
 		tl=${t,,}
+		match=""
 		if [[ -n ${nameset[$tl]:-} ]]; then
+			match=$t                       # exact name; keep the SSID's casing
+		elif [[ $tl == *s && -n ${nameset[${tl%s}]:-} ]]; then
+			match=${t%[sS]}                # possessive: "Marias" -> "Maria"
+		fi
+		if [ -n "$match" ]; then
 			# Double any single quote for the SQL string literal.
-			esc=${t//\'/\'\'}
+			esc=${match//\'/\'\'}
 			mysql probeprint <<< "update ssid_intel set is_name='$esc' where ssid_hex=\"$ssid_hex\";"
 			break
 		fi

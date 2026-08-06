@@ -40,7 +40,12 @@ mkdir -p locs                # WiGLE response cache, gitignored
 # backfill from saved captures instead
 ./pcap2db.sh capture1.pcap capture2.pcap
 
-# enrichment: edit build_ssid_intel.sh to pick passes, or run them individually
+# enrichment: every pass, in dependency order -- the normal way to run them
+./process.sh                 # incremental; skips rows already enriched
+./process.sh --recompute     # re-derive everything
+./process.sh --list          # show the passes and stop
+
+# or pick them off individually
 ./standalone_categorize.sh
 ./standalone_name.sh
 ./standalone_airport.sh
@@ -60,6 +65,13 @@ mkdir -p locs                # WiGLE response cache, gitignored
 # live display
 ./display.sh
 ```
+
+Only three orderings actually matter, and `process.sh` encodes them:
+`standalone_ssid2ssid_intel.sh` first, because nothing else has rows to work on;
+rarity before seqgraph, because `pnl_rarity` sums `ssid_intel.rarity`; geolocate
+before oneloc, because `is_oneloc` derives from `geo_match_count` and refuses
+rather than guessing without it. `process.sh` makes **no network call** —
+`summarize_location.sh --new` is the WiGLE fetch and is deliberately separate.
 
 `diagnose_legacy_rows.sh` is read-only and reports rows that look like they were
 written by the pre-2025 ingest parser (see *Ingest* below).
@@ -217,8 +229,14 @@ invokes `build_ssid.sh` by absolute path, so that distinction is load-bearing.
 | `seqgraph_functions.sh` | `seqgraph_assign`, `assign_aliases` — device identity across MAC rotation |
 | `display_functions.sh` | `rssi_range`, `device_profile_rows`, `display_inrange` — the operator view |
 | `bursts_functions.sh` | Burst grouping by MAC / sequence / VHT |
+| `geolocate_functions.sh` | `geo_from_wigle_cache`, `derive_is_oneloc`, `geo_harvest_bssids`, `geo_reverse_addresses`, `geo_google_observer`, `geo_apple_bssid` — coordinates, and the provider reasoning below |
+| `language_functions.sh` | `check_language_words` — language from vocabulary, for the Latin-script SSIDs `check_language`'s byte-range test cannot see |
+| `recategorize_functions.sh` | `recategorize_unknown`, `enumerate_cpe_region` — second pass over `OTHER_UNKNOWN` only |
+| `industry_functions.sh` | `check_industry` — the engagement-specific `INDUSTRY_*` keyword lists |
 | `ssid_intel_functions.sh` | The remaining enrichment passes; sourced by `build_ssid_intel.sh` |
 | `standalone_*.sh` | One concern each, runnable directly |
+| `process.sh` | Runs every enrichment pass in dependency order; the normal entry point |
+| `summarize_location.sh` | The live WiGLE fetch path, kept out of `process.sh` because it is rate limited |
 | `client/` | Distributed Pi capture nodes writing to a central database |
 
 **Two generations still coexist** for the enrichment passes:

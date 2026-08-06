@@ -278,10 +278,12 @@ Roughly in descending order of value for this engagement:
    `ssid_intel.rarity` holds the per-SSID weight, so the metric is a join away:
    `Psim-3(X,Y) = Σ 1/f(z)³` over the SSIDs two devices share. This is the
    highest-value remaining gap.
-2. **Wi-Fi ↔ Bluetooth correlation** — the stated goal in `../idea.txt`, still
-   entirely unimplemented. Correlate by co-presence window, RSSI correlation and
-   joint appear/disappear. BLE frequently carries a real human name where Wi-Fi
-   does not.
+2. **Wi-Fi ↔ Bluetooth correlation** — a stated goal of the engagement (see the
+   workspace `../CLAUDE.md`), still entirely unimplemented: it would join this
+   database to Blue2thprinting's `bt2`, and nothing links the two today.
+   Correlate by co-presence window, RSSI correlation and joint
+   appear/disappear. BLE frequently carries a real human name where Wi-Fi does
+   not.
 3. **Multi-node trilateration** — `client/` already deploys three capture nodes
    writing to one database. The capability is latent and unused.
 4. **Timing and behavioral signal** — inter-burst interval, frames per burst,

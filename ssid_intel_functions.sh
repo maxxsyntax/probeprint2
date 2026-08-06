@@ -61,7 +61,9 @@ check_common () {
 	else 
 		mysql probeprint <<< "update ssid_intel set is_common=0 where ssid_hex=\"$ssid_hex\";"
 	fi
-done <<< $(mysql -N probeprint <<<"select ssid_hex from ssid_intel where is_common is null and ssid_hex not like '1%' and ssid_hex not like '2%' and ssid_hex not like '8%';")
+# 5a: an embedded 00 byte marks a frame that is not a real network name, so
+# exclude %00% and a trailing %00 as well as the anomalous 1/2/8 hex prefixes.
+done <<< $(mysql -N probeprint <<<"select ssid_hex from ssid_intel where is_common is null and ssid_hex not like '1%' and ssid_hex not like '2%' and ssid_hex not like '8%' and ssid_hex not like '%00%' and ssid_hex not like '%00';")
 
 }
 
@@ -92,18 +94,13 @@ categorize () {
 #bug where next line is nullifed on ssids starting with special character
 	mysql probeprint <<< "update ssid_intel set category = \"OTHER_UNKNOWN\"  where category is null;"
 	echo categorize stop $(date +"%H:%M:%S.%3N")
-	sleep 5
 #done
 }
 
 
-check_industry () {
-echo industry check $(date +"%H:%M:%S.%3N")
-while read line; do 
-ind_hex=$(echo -n $line | xxd -p)
-mysql probeprint <<< "update ssid_intel set category=\"INDUSTRY_ORG\" where ssid_hex like \"$ind_hex%\"; "
-done < lists/industry.txt
-}
+# check_industry now lives in industry_functions.sh, sourced at the top of
+# this file, so the standalone script and this one cannot drift.
+
 
 check_airport () {
 	#while true; do
@@ -117,7 +114,6 @@ while IFS='|' read -r iata description; do
 	 mysql probeprint <<< "update ssid_intel set is_airport=\"$description\" where ssid_hex like \"$iata_hex%\" or ssid_hex like '%$iata_hex%'; "
 done < lists/airports.txt
 mysql probeprint <<< "update ssid_intel set is_airport=0 where is_airport is null;"
-sleep 10
 #done
 echo Airport check stop $(date +"%H:%M:%S.%3N")
 }
@@ -156,19 +152,15 @@ while read ssid_hex; do
 	#echo $ssid_hex $name
 done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where ssid_hex like \"%46616d696c79\" and is_name is null;")
 
-while read line; 
+#iterate through name list
+while read name_hex;
 do
-	name_hex=$(echo -n $line | xxd -p)
-	name_hex_lower=$(echo -n $line | tr [:upper:] [:lower:] | xxd -p)
-	name_hex_upper=$(echo -n $line | tr [:lower:] [:upper:] | xxd -p)
-	#echo $name_hex
-	mysql probeprint <<< "update ssid_intel set is_name=\"$line\" where (ssid_hex like \"$name_hex%\" or ssid_hex like \"%$name_hex%\" or ssid_hex like \"$name_hex_lower%\" or ssid_hex like \"%$name_hex_lower%\" or ssid_hex like \"$name_hex_upper%\" or ssid_hex like \"%$name_hex_upper%\") and is_name is null;"
-done < lists/names.txt
-mysql probeprint <<< "update ssid_intel set category=\"NAME\" where is_name!=0 and is_name is not null;"
+	name=$(echo $name_hex | xxd -r -p)
+	mysql probeprint <<< "update ssid_intel set is_name=\"$name\" where (ssid_hex like \"$name_hex%\" or ssid_hex like \"%$name_hex%\" or ssid_hex like \"%$name_hex\") and is_name is null;"
+done < lists/names_hex.txt
+mysql probeprint <<< "update ssid_intel set category=\"NAME\" where is_name!='' and is_name is not null;"
 mysql probeprint <<< "update ssid_intel set is_name=0 where is_name is null;"
 echo check_name stop $(date +"%H:%M:%S.%3N")
-sleep 10
-#done
 }
 
 
@@ -203,113 +195,53 @@ echo check_fqdn stop $(date +"%H:%M:%S.%3N")
 
 
 check_address () {
+	echo address start $(date +"%H:%M:%S.%3N")
+	while read ssid_hex; do
+		ssid=$(echo $ssid_hex | xxd -r -p)
 	if egrep -q '^[0-9]{1,5} ?[A-Z][\\.a-z] ?[a-zA-Z]' <<< "$ssid"
- 		then 
+ 		then
+		echo $ssid_hex
 		mysql probeprint <<< "update ssid_intel set category=\"LOCATION_SPECIFIC\" where ssid_hex=\"$ssid_hex\";"
 	fi
+done <<< $( mysql -N probeprint <<< "select ssid_hex from ssid_intel where ssid_hex like '3%';")
+	echo check address stop $(date +"%H:%M:%S.%3N")
 }
 
 
 check_oneloc () {
 	#set -x
-	echo oneloc start $(date +"%H:%M:%S.%3N")
-while read ssid_hex; 
-	do
-	#also need to add case sensitve single matches and not just what wigle says
-	#for loc_file in ./locs/$ssid_hex.location; 
-		#do 
-			#can probably be shortened into a better jq query
-		match=$(cat ./locs/$ssid_hex.location 2>/dev/null | jq | grep  -A 8 'lts": 1,' | grep ssid | cut -d\" -f4); 
-		if egrep -q '.'  <<<"$match"
-			then
-			#echo oneresult 
-			mysql probeprint <<< "update ssid_intel set is_oneloc='1' where ssid_hex=\"$ssid_hex\";"
-			else
-				mysql probeprint <<< "update ssid_intel set is_oneloc=0 where ssid_hex=\"$ssid_hex\";"
-		fi
-	#done
-
-done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where is_oneloc is null;")
-
-	while read ssid_hex; do 
-		city=$(cat ./locs/$ssid_hex.location | jq | grep city | cut -d\" -f4); 
-		if [[ -n $city ]] ; 
-			then 
-			mysql probeprint <<< "update ssid_intel set location=\"$city\" where ssid_hex=\"$ssid_hex\";"
-		fi
-	done <<<$(mysql -N probeprint <<< "select ssid_hex from ssid_intel where is_oneloc=1 and location is null;")
-	mysql probeprint <<< "update ssid_intel set location=\"AMBIGUOUS_LOC\" where is_oneloc=1 and location is null;"
-
-echo oneloc stop $(date +"%H:%M:%S.%3N")
+	# The body of this pass now lives in geolocate_functions.sh as
+	# derive_is_oneloc, sourced at the top of this file, so the two generations
+	# of the codebase cannot drift apart on it.
+	#
+	# It used to grep the cached WiGLE body for `"totalResults": 1`. That number
+	# counts case-INSENSITIVE matches, so "MyNet" and "mynet" -- different
+	# networks, different owners, different cities -- inflated it together, and
+	# the flag was wrong for most of its positives in both directions. It is now
+	# derived from geo_match_count, which counts results matching the probed
+	# SSID byte-for-byte.
+	#
+	# The old "AMBIGUOUS_LOC" placeholder is gone with it: a row can only reach
+	# is_oneloc=1 by having a resolved coordinate, so there is nothing ambiguous
+	# left to mark.
+	derive_is_oneloc "$@"
 }
 
 
 
 
-summarize_location () {
-	#while true; do
-		echo summarize_location start $(date +"%H:%M:%S.%3N")
-		while read ssid_hex; do
-			#echo $ssid_hex
- 			ssid=$(echo -n $ssid_hex | xxd -r -p )
- 			if [ $? -ne 0 ]
- 			then
- 				echo $ssid_hex
- 			fi
- 			#echo $ssid_hex
- 			locale=""
- 			if [  -f locs/"$ssid_hex".location ]
-			#if [  -f locs/"$ssid_uri".location ]
-			then
-				results=$(cat locs/"$ssid_hex".location | jq | grep totalResults | tr -s \  | cut -d\  -f3 | cut -d, -f1)
-				#results=$(cat locs/"$ssid_uri".location | jq | grep totalResults | tr -s \  | cut -d\  -f3 | cut -d, -f1)
-				#echo $ssid_hex $ssid $ssid_uri #debugging
-				if [ $results -gt 0 ]  &&  [ $results -lt 100 ]; then
-					#find uniq country/region/city/road, grep -A 22 is for case sensitivity
-					#cc=$(cat locs/$ssid_uri.location | jq | grep -A 22 "$ssid" | grep country | sort | uniq | grep -v null |wc -l)
-					cc=$(cat locs/$ssid_hex.location | jq | grep -A 22 "$ssid" | grep country | sort | uniq | grep -v null |wc -l)
-					if [ $cc -eq 1 ]
-					then
-						rc=$(cat locs/"$ssid_hex".location | jq |  grep -A 22 "$ssid" |grep region | sort | uniq | grep -v null| wc -l)
-						#rc=$(cat locs/"$ssid_uri".location | jq |  grep -A 22 "$ssid" |grep region | sort | uniq | grep -v null| wc -l)
-						if [ $rc -eq 1 ]
-						then
-							cic=$(cat locs/"$ssid_hex".location | jq | grep -A 22 "$ssid" | grep city | sort | uniq | wc -l)
-							#cic=$(cat locs/"$ssid_uri".location | jq | grep -A 22 "$ssid" | grep city | sort | uniq | wc -l)
-							if [ $cic -eq 1 ]
-							then
-					##			#show city and roads, and region in case city is null
-								locale=$(echo -n $(cat locs/"$ssid_hex".location | jq |  grep -A 22 "$ssid" |grep region | sort | uniq | grep -v null | tr '\n' ' ' | sed 's/\"region\"://g' | tr -s \  ) && echo -n $(cat locs/"$ssid_hex".location | jq |  grep -A 22 "$ssid"| grep city | sort | uniq | tr '\n' ' ' | sed 's/\"city\"://g' |tr -s \  ) && echo -n $(cat locs/"$ssid_hex".location | jq | grep -A 22 "$ssid" | grep road | sort | uniq | tr '\n' ' ' | sed 's/\"road\"://g' | tr -s \  | sed 's/\ null,//g' | sed 's/\",\ \"/,/g' | tr -s \  ))
-								#locale=$(echo -n $(cat locs/"$ssid_uri".location | jq |  grep -A 22 "$ssid" |grep region | sort | uniq | grep -v null | tr '\n' ' ' | sed 's/\"region\"://g' | tr -s \  ) && echo -n $(cat locs/"$ssid_uri".location | jq |  grep -A 22 "$ssid"| grep city | sort | uniq | tr '\n' ' ' | sed 's/\"city\"://g' |tr -s \  ) && echo -n $(cat locs/"$ssid_uri".location | jq | grep -A 22 "$ssid" | grep road | sort | uniq | tr '\n' ' ' | sed 's/\"road\"://g' | tr -s \  | sed 's/\ null,//g' | sed 's/\",\ \"/,/g' | tr -s \  ))
-							else
-								#show mu ltiple cities
-								locale=$(echo -n $cic cities\  && echo -n $(cat locs/"$ssid_hex".location | jq | grep -A 22 "$ssid" | grep city | sort | uniq | tr '\n' ' ' | sed 's/\"city\"://g' | tr -s \  | sed 's/\ null,//g' | sed 's/\",\ \"/,/g'))
-								#locale=$(echo -n $cic cities\  && echo -n $(cat locs/"$ssid_uri".location | jq | grep -A 22 "$ssid" | grep city | sort | uniq | tr '\n' ' ' | sed 's/\"city\"://g' | tr -s \  | sed 's/\ null,//g' | sed 's/\",\ \"/,/g'))
-							fi
-						else
-			#				#show multiple regions
-							locale=$(echo -n $rc regions\  && echo -n $(cat locs/"$ssid_hex".location | jq | grep -A 22 "$ssid" | grep region | sort | grep -v null |  uniq -c  | sort -nr | tr '\n' ' ' | sed 's/\"region\"://g' | tr -s \  |  sed 's/\",\ \"/,/g' ))
-							#locale=$(echo -n $rc regions\  && echo -n $(cat locs/"$ssid_uri".location | jq | grep -A 22 "$ssid" | grep region | sort | grep -v null |  uniq -c  | sort -nr | tr '\n' ' ' | sed 's/\"region\"://g' | tr -s \  |  sed 's/\",\ \"/,/g' ))
-						fi
-					else
-			#		#show multiple countries
-					locale=$(echo -n $cc countries\ && echo -n $(cat locs/"$ssid_hex".location | jq | grep -A 22 "$ssid" | grep country | sort | grep -v null | sed 's/\"country\"://g' | tr -s \  |  sed 's/\",\ \"/,/g' | uniq -c | sort -nr | tr -s \   | sed 's/\"country\"\://g'| tr '\n' '\ ' | tr -s \ ))
-					#locale=$(echo -n $cc countries\ && echo -n $(cat locs/"$ssid_uri".location | jq | grep -A 22 "$ssid" | grep country | sort | grep -v null | sed 's/\"country\"://g' | tr -s \  |  sed 's/\",\ \"/,/g' | uniq -c | sort -nr | tr -s \   | sed 's/\"country\"\://g'| tr '\n' '\ ' | tr -s \ ))
-					fi
-				fi
-				#echo $locale
-			locale=$(echo $locale | tr -d \" | sed 's/0 countries//g')
-			mysql probeprint <<< "update ssid_intel set location=\"$locale\" where ssid_hex=\"$ssid_hex\";"
-			mysql probeprint <<< "update ssid_intel set location=0 where ssid_hex=\"$ssid_hex\" and location is NULL;"
-			fi
-		done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where location is null and ssid_hex not like '%000%';" )
-	echo summarize_location end $(date +"%H:%M:%S.%3N")
-	sleep 10
-#	done
-}
 
 check_anomalies () {
-	mysql probeprint <<< "update ssid_intel set category=\"OTHER_ANOMALOUS\" where (ssid_hex like '%00' or ssid_hex like '%00%' or ssid_hex like '%ff%' or ssid_hex >=8 or ssid_hex <= 2) and category is null;";
+	mysql probeprint <<< "UPDATE ssid_intel
+SET category = \"OTHER_ANOMALOUS\"
+WHERE (
+    ssid_hex LIKE '%00'
+    OR ssid_hex LIKE '%00%'
+    OR ssid_hex LIKE '%ff%'
+    OR CONV(LEFT(ssid_hex, 1), 16, 10) >= 8
+    OR CONV(LEFT(ssid_hex, 1), 16, 10) <= 2
+)
+AND category IS NULL;";
 	mysql probeprint <<< "update ssid_intel set category=\"OTHER_ANOMALOUS\" where (ssid_hex like '7c%') and category is null;"
 }
 

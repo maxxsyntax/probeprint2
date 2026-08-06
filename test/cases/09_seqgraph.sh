@@ -3,7 +3,7 @@
 #
 # This is the capability the old ssid2bursts-seq lacked. Its one-second window
 # could group frames inside a burst but never join two bursts, so a device that
-# rotated its randomised MAC in between looked like two separate devices.
+# rotated its randomized MAC in between looked like two separate devices.
 source "${REPO:-/opt/probeprint2}/test/lib.sh"
 cd "$REPO"
 
@@ -51,8 +51,8 @@ assert_eq "the post-wrap frame joined the same device" "$wrap" \
     "$(sq1 "select device_id from ssid where ssid_hex=lower(hex('WrapNet')) and seq=2;")"
 
 # --- reporting ------------------------------------------------------------
-assert_contains "run reports how many randomisations were defeated" \
-    "randomisation defeated on" "$(cat /tmp/seqgraph.log)"
+assert_contains "run reports how many randomizations were defeated" \
+    "randomization defeated on" "$(cat /tmp/seqgraph.log)"
 
 report=$(./standalone_seqgraph.sh --report 2>&1)
 assert_contains "report lists the multi-MAC device first" "$dev" \

@@ -5,14 +5,31 @@
 # with `add column if not exists`, so a fresh install and an existing
 # collection converge on exactly the same schema.
 
+# Every table is pinned to one collation, explicitly.
+#
+# MariaDB 11.x changed the utf8mb4 default from utf8mb4_general_ci to
+# utf8mb4_uca1400_ai_ci. Tables restored from a dump taken on an older server
+# keep general_ci, while any table created here without an explicit collation
+# picks up the new server default. Joining a varchar across the two then fails
+# outright:
+#
+#   ERROR 1267: Illegal mix of collations (utf8mb4_general_ci,IMPLICIT)
+#               and (utf8mb4_uca1400_ai_ci,IMPLICIT) for operation '='
+#
+# which silently breaks `update ssid join device_stage on s.time = t.time` and
+# leaves every frame unassigned. general_ci is the target because that is what
+# the existing collections use; the values involved are hex, MAC addresses and
+# numeric strings, so the ordering rules are irrelevant -- only agreement is.
+DB_COLLATE="character set utf8mb4 collate utf8mb4_general_ci"
+
 mysql -e "create database if not exists probeprint;"
 
-mysql probeprint -e "create table if not exists ssid(ssid_hex varchar(200), wlan_sa varchar(17), time varchar(22) primary key, rssi varchar(12), freq integer, seq integer, vht varchar(20), is_processed integer default 0, vendor text default null, tag text default null);"
+mysql probeprint -e "create table if not exists ssid(ssid_hex varchar(200), wlan_sa varchar(17), time varchar(22) primary key, rssi varchar(12), freq integer, seq integer, vht varchar(20), is_processed integer default 0, vendor text default null, tag text default null) $DB_COLLATE;"
 
 
-mysql probeprint -e "create table if not exists ssid_intel(ssid_hex varchar(255) primary key,  location varchar(64), category varchar(32), is_name varchar(20),is_airport varchar(255), is_common integer default null, is_oneloc integer, score integer default null);"
+mysql probeprint -e "create table if not exists ssid_intel(ssid_hex varchar(255) primary key,  location varchar(64), category varchar(32), is_name varchar(20),is_airport varchar(255), is_common integer default null, is_oneloc integer, score integer default null) $DB_COLLATE;"
 
-mysql probeprint -e "create table if not exists bursts(ssids text, time varchar(22) primary key, burst_size integer, burst_duration varchar(22) default 0, related_burst integer default 0, is_uniq integer default null, bmethod varchar(20) default null);"
+mysql probeprint -e "create table if not exists bursts(ssids text, time varchar(22) primary key, burst_size integer, burst_duration varchar(22) default 0, related_burst integer default 0, is_uniq integer default null, bmethod varchar(20) default null) $DB_COLLATE;"
 
 # ---------------------------------------------------------------------------
 # Information Element fingerprinting columns.
@@ -68,7 +85,7 @@ mysql probeprint -e "create table if not exists devices (
   confidence      varchar(8)  default null,
   unique key uniq_device_key (device_key),
   unique key uniq_alias (alias)
-);"
+) $DB_COLLATE;"
 
 # ---------------------------------------------------------------------------
 # The preferred network list: which SSIDs each device has been seen probing for.
@@ -80,7 +97,7 @@ mysql probeprint -e "create table if not exists devices (
 # device. It is also the substrate for linking two devices -- and therefore two
 # people -- by the rarity of the SSIDs they share.
 #
-# Materialised rather than derived on demand: it is read constantly by the
+# Materialized rather than derived on demand: it is read constantly by the
 # display and will be read pairwise by any future linkage pass, where a
 # group-by over the whole ssid table per comparison would be hopeless.
 # ---------------------------------------------------------------------------
@@ -92,7 +109,7 @@ mysql probeprint -e "create table if not exists device_ssid (
   last_seen   varchar(22)  default null,
   primary key (device_id, ssid_hex),
   key idx_device_ssid_ssid (ssid_hex)
-);"
+) $DB_COLLATE;"
 
 # pnl_size  -- how many distinct networks this device asks for.
 # pnl_rarity-- summed rarity of them, i.e. how identifying the list is as a
@@ -107,7 +124,7 @@ mysql probeprint -e "create table if not exists device_stage (
   time       varchar(22) primary key,
   device_key char(16) not null,
   key idx_stage_key (device_key)
-);"
+) $DB_COLLATE;"
 
 mysql probeprint -e "alter table ssid add column if not exists device_id int default null;"
 mysql probeprint -e "create index if not exists idx_ssid_device_id on ssid (device_id);"
@@ -140,8 +157,86 @@ fi
 mysql probeprint -e "alter table ssid_intel add column if not exists ssid_total bigint default null;"
 mysql probeprint -e "alter table ssid_intel add column if not exists rarity double default null;"
 
+# ---------------------------------------------------------------------------
+# Coordinates.
+#
+# The WiGLE responses cached in locs/ carry trilat/trilong for every match, but
+# summarize_one only ever extracted country/region/city/road and flattened them
+# into a text string -- the coordinates were fetched and thrown away. These
+# columns keep them, which is what makes any spatial analysis possible at all.
+#
+# geo_source records which provider the fix came from, because they answer
+# different questions and are not interchangeable. See geolocate_functions.sh.
+# ---------------------------------------------------------------------------
+mysql probeprint -e "alter table ssid_intel add column if not exists lat double default null;"
+mysql probeprint -e "alter table ssid_intel add column if not exists lon double default null;"
+mysql probeprint -e "alter table ssid_intel add column if not exists geo_source varchar(16) default null;"
+mysql probeprint -e "alter table ssid_intel add column if not exists geo_accuracy int default null;"
+
+# How many WiGLE results matched the SSID *case-sensitively*.
+#
+# WiGLE's search is case-insensitive, so a query for "MyNet" also returns
+# "mynet" and "MYNET" -- which are different networks in different places. A
+# probe request carries one exact byte string, so only an exact-case result is
+# actually the network the device asked for.
+#
+#   geo_match_count = 1   exactly one network has this name. Its coordinates
+#                         are that AP's, and this is the definitive case.
+#   geo_match_count > 1   several distinct APs share the exact name; a fix is
+#                         only meaningful if they sit close together.
+#   geo_match_count = 0   WiGLE knows the name only in other letter cases.
+#
+# This is a strictly better signal than ssid_intel.is_oneloc, which keys on
+# WiGLE's totalResults == 1 -- a case-insensitive count that conflates
+# "MyNet" with "mynet". is_oneloc is left as it is so existing rows keep their
+# meaning, but prefer geo_match_count.
+mysql probeprint -e "alter table ssid_intel add column if not exists geo_match_count int default null;"
+mysql probeprint -e "alter table ssid_intel add column if not exists street_address varchar(255) default null;"
+mysql probeprint -e "create index if not exists idx_ssid_intel_geo on ssid_intel (lat, lon);"
+
+# The destination address. On an undirected probe this is the broadcast address,
+# but a *directed* probe -- for a hidden network, or an AP the device knows --
+# carries the target AP's BSSID. That is the only way a BSSID ever appears in
+# probe-request data, and BSSIDs are what every WiFi positioning service other
+# than WiGLE is keyed on.
+mysql probeprint -e "alter table ssid add column if not exists wlan_da varchar(17) default null;"
+mysql probeprint -e "create index if not exists idx_ssid_wlan_da on ssid (wlan_da);"
+
+# BSSIDs harvested from directed probes, and where they resolve to.
+mysql probeprint -e "create table if not exists bssid_geo (
+  bssid          varchar(17) primary key,
+  ssid_hex       varchar(200) default null,
+  lat            double      default null,
+  lon            double      default null,
+  geo_accuracy   int         default null,
+  geo_source     varchar(16) default null,
+  street_address varchar(255) default null,
+  probe_count    int         default 0,
+  first_seen     varchar(22) default null,
+  last_seen      varchar(22) default null
+) $DB_COLLATE;"
+
 # Lookup table built from lists/ssid.csv by standalone_rarity.sh.
-mysql probeprint -e "create table if not exists ssid_freq(ssid_hex varchar(255) primary key, total bigint not null);"
+mysql probeprint -e "create table if not exists ssid_freq(ssid_hex varchar(255) primary key, total bigint not null) $DB_COLLATE;"
+
+# ---------------------------------------------------------------------------
+# Converge the collation of any table that already existed.
+#
+# `create table if not exists` does nothing to a table that is already there, so
+# pinning the collation above only helps fresh installs. A collection restored
+# from a dump, or created before this change, keeps whatever it had -- and one
+# mismatched table is enough to break every string join against it.
+#
+# Only tables that actually differ are touched; converting within utf8mb4
+# changes the collation, not the encoding, so no data is rewritten or lost.
+# ---------------------------------------------------------------------------
+for t in ssid ssid_intel bursts devices device_ssid device_stage ssid_freq bssid_geo; do
+	current=$(mysql -N probeprint -e "select table_collation from information_schema.tables where table_schema='probeprint' and table_name='$t';" 2>/dev/null)
+	if [ -n "$current" ] && [ "$current" != "utf8mb4_general_ci" ]; then
+		echo "COLLATION: $t is $current, converting to utf8mb4_general_ci"
+		mysql probeprint -e "alter table \`$t\` convert to $DB_COLLATE;"
+	fi
+done
 
 # The distributed client/ nodes connect as 'pi' to the central database.
 # These were previously bare SQL statements outside any mysql invocation, so

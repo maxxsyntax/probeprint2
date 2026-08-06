@@ -36,7 +36,7 @@ banner=$(device_banner "$dev")
 
 assert_contains "banner names the device by its alias" "$alias" "$banner"
 assert_contains "banner reports the merge was confirmed" "confirmed across 3 MACs" "$banner"
-assert_contains "banner flags the defeated randomisation" "randomisation defeated" "$banner"
+assert_contains "banner flags the defeated randomization" "randomization defeated" "$banner"
 
 # A low-confidence device must be called out, not presented as fact.
 mysql probeprint -e "update ssid set ie_order='0,1,45', extcap='0xff' where device_id = $dev limit 1;"

@@ -5,10 +5,10 @@
 # standalone_mac2vendor.sh, so the two cannot drift.
 #
 # Selecting SSIDs probed by exactly one MAC is deliberate: a device with a
-# randomised address re-probes the same SSID under several addresses, so an SSID
+# randomized address re-probes the same SSID under several addresses, so an SSID
 # seen from a single MAC is good evidence that MAC is the device's real,
 # OUI-bearing address. This leaves false negatives but filters out most
-# randomised addresses, which have no registered OUI anyway.
+# randomized addresses, which have no registered OUI anyway.
 
 # _load_oui_map
 # Read lists/oui.csv once into the OUI_MAP associative array, keyed by uppercase

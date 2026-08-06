@@ -8,7 +8,7 @@ cd "$REPO"
 
 echo "== starting mariadb =="
 
-# The mariadb-server postinst normally initialises /var/lib/mysql, but that is
+# The mariadb-server postinst normally initializes /var/lib/mysql, but that is
 # not guaranteed to have run in a container build, so do it idempotently.
 if [ ! -d /var/lib/mysql/mysql ]; then
     mariadb-install-db --user=mysql --auth-root-authentication-method=socket >/dev/null

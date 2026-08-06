@@ -24,13 +24,14 @@ If the daemon is not running: `sudo systemctl start docker`.
 | `02_bursts` | All three burst-grouping methods (`wlan_sa`, `seq`, `vht`), `is_uniq`, numeric RSSI comparison |
 | `03_schema` | `build_dbs.sh` runs clean and idempotently, creates all tables, the `score` column and the `pi` user |
 | `04_enrichment` | `categorize`, `check_language`, `check_fqdn`, `check_airport`, `check_name`, `check_common`, `mac2vendor`, `make_ignore_list`, and that no pass treats the SQL header as data |
-| `05_location` | WiGLE summarisation against canned API bodies: single city, multi-city, multi-country, zero results, quota exhaustion, uncached, jq quoting |
+| `05_location` | WiGLE summarization against canned API bodies: single city, multi-city, multi-country, zero results, quota exhaustion, uncached, jq quoting |
 | `06_ifs_order` | Enrichment results are independent of pass order, proving `IFS` no longer leaks between functions |
 | `07_legacy_diagnostic` | `diagnose_legacy_rows.sh` detects shifted rows and writes nothing |
 | `08_rarity` | Continuous SSID rarity: corpus load, comma-bearing SSIDs, unseen = max rarity, and that rarity separates SSIDs `is_common` cannot |
 | `09_seqgraph` | Device identity across MAC rotation, 12-bit counter wrap, stable ids across incremental runs, alias determinism, confidence from IE consistency |
 | `10_display` | Display layer queries MariaDB not sqlite, and surfaces alias + confidence + rarity |
 | `11_pnl_validate` | The preferred network list attached to each device, `pnl_rarity`, and the static-MAC accuracy harness detecting a real false merge and split |
+| `12_geolocate` | Coordinates extracted from the WiGLE cache offline, multi-location SSIDs correctly refused, BSSID harvesting from directed probes, and both network providers refusing to guess |
 
 ## Rules
 

@@ -1,0 +1,27 @@
+{
+  "success": true,
+  "totalResults": 2,
+  "resultCount": 2,
+  "results": [
+    {
+      "trilat": 40.71277600,
+      "trilong": -74.00594000,
+      "ssid": "DupExactNet",
+      "qos": 7,
+      "country": "US",
+      "region": "NY",
+      "city": "New York",
+      "road": "Broadway"
+    },
+    {
+      "trilat": 34.05223400,
+      "trilong": -118.24368300,
+      "ssid": "DupExactNet",
+      "qos": 6,
+      "country": "US",
+      "region": "CA",
+      "city": "Los Angeles",
+      "road": "South Spring Street"
+    }
+  ]
+}

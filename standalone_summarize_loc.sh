@@ -1,10 +1,10 @@
 #!/bin/bash
-# Bulk sweep: summarise cached WiGLE responses for every SSID lacking a location.
+# Bulk sweep: summarize cached WiGLE responses for every SSID lacking a location.
 #
 # Offline by design -- it reads whatever is already cached in locs/ and never
 # calls the API. Use `summarize_location.sh --new` when you want fetching too.
 #
-# The jq summarisation itself now lives in location_functions.sh, shared with
+# The jq summarization itself now lives in location_functions.sh, shared with
 # summarize_location.sh, so the two paths cannot drift apart again.
 source .env
 source ./location_functions.sh

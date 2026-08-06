@@ -21,7 +21,7 @@ identifiable people. Two consequences for anyone working in this repo:
   `lists/industry.txt` and `*.db` are gitignored for this reason. Do not add
   captured SSIDs to test fixtures, commit messages, or issue text.
 - **Never send collected data to a third-party service** without explicit
-  authorisation. WiGLE lookups send SSIDs to wigle.net; that is inherent to the
+  authorization. WiGLE lookups send SSIDs to wigle.net; that is inherent to the
   tool, but it is still egress.
 
 ## Run everything from the repo root
@@ -51,6 +51,11 @@ mkdir -p locs                # WiGLE response cache, gitignored
 ./build_bursts.sh            # SSID sets per burst
 ./standalone_seqgraph.sh     # devices, chained across MAC rotation
 ./standalone_seqgraph.sh --report   # roster: alias, confidence, MACs absorbed
+
+# geolocation (post-capture; the default path is offline)
+./standalone_geolocate.sh           # coords from the locs/ WiGLE cache
+./standalone_geolocate.sh --bssids  # harvest BSSIDs from directed probes
+./standalone_geolocate.sh --addresses # reverse geocode via Nominatim (network)
 
 # live display
 ./display.sh
@@ -110,6 +115,7 @@ miss them.
 | `devices` | One row per inferred physical device |
 | `device_ssid` | **The preferred network list**: which SSIDs each device probes for |
 | `device_stage` | Scratch table the sequence graph joins through |
+| `bssid_geo` | BSSIDs harvested from directed probes, and where they resolve |
 
 ### Conventions that will bite you
 
@@ -151,7 +157,7 @@ miss them.
   device rather than the MAC, so a rotation yields one complete list instead of
   three partial ones.
 - **Run `./standalone_seqgraph.sh --validate` on any real capture before
-  trusting the clustering.** Devices that do not randomise their MAC are ground
+  trusting the clustering.** Devices that do not randomize their MAC are ground
   truth needing no inference, so two of them in one cluster is a provable false
   merge and one split across clusters a provable false split. That gives a
   measured error rate at your current α/β, in your actual environment — use it
@@ -205,7 +211,7 @@ invokes `build_ssid.sh` by absolute path, so that distinction is load-bearing.
 | File | Role |
 |---|---|
 | `ingest_functions.sh` | `PROBE_TSHARK_ARGS`, `ingest_stream` — the parse + insert loop |
-| `location_functions.sh` | `wigle_fetch`, `summarize_one` — WiGLE fetch and jq summarisation |
+| `location_functions.sh` | `wigle_fetch`, `summarize_one` — WiGLE fetch and jq summarization |
 | `vendor_functions.sh` | `mac2vendor` — OUI → vendor |
 | `rarity_functions.sh` | `load_ssid_frequencies`, `score_rarity` — continuous SSID rarity |
 | `seqgraph_functions.sh` | `seqgraph_assign`, `assign_aliases` — device identity across MAC rotation |
@@ -255,3 +261,34 @@ sources it rather than carrying inline copies of the same queries.
 Comments in these files that read like bug reports (`#bug here …`, `#borken`)
 are often still accurate — but check against the test suite first, since several
 are now stale.
+
+## Geolocation providers are not interchangeable
+
+`geolocate_functions.sh` opens with the full reasoning; the short version:
+
+| Provider | Input | Answers | Status |
+|---|---|---|---|
+| **WiGLE** | SSID **or** BSSID | where that AP is | in use; `locs/` cache is read offline |
+| **Google** | a *set* of BSSIDs | where the **observer** is | needs `GOOGLE_GEOLOCATION_KEY`, ≥2 BSSIDs |
+| **Apple** | one BSSID | that AP's position | **no public API** — ships disabled |
+| **Nominatim** | lat/lon | street address | free, 1 req/sec, needs a real User-Agent |
+
+Two consequences that catch people out:
+
+- **An undirected probe request contains no BSSID.** Only the SSID. So every
+  BSSID-keyed service is unreachable from ordinary probe data — which is why
+  ingest now captures `wlan.da`: a *directed* probe addresses the AP, and that
+  is the sole route by which a BSSID enters this pipeline.
+- **Google locates the observer, not the network.** Given the APs you can hear
+  it answers "where am I". It cannot tell you where one SSID is. For per-AP
+  position the options are WiGLE, or Apple's undocumented endpoint.
+
+Apple is stubbed rather than implemented on purpose: there is no public API, the
+endpoint returns position data on hundreds of unrelated third-party APs per
+query (Rye & Levin, 2024), and enabling it is an engagement-owner decision.
+
+**Enrichment is post-capture.** `standalone_geolocate.sh` with no arguments is
+strictly offline — it reads the `locs/` cache and makes no network call, which
+is what makes it safe to run anywhere. Network providers are opt-in flags. To
+run the offline pass during capture, set `geo_online=1` in `.env`; it is off by
+default because a rate-limited round trip in the ingest loop costs frames.

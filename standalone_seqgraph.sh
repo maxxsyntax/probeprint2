@@ -1,5 +1,5 @@
 #!/bin/bash
-# Link probe requests into devices across MAC randomisation, using the 802.11
+# Link probe requests into devices across MAC randomization, using the 802.11
 # sequence counter, and attach each device's preferred network list.
 # See seqgraph_functions.sh for the algorithm and its source.
 #
@@ -17,7 +17,7 @@
 #                     disagree, which prevents most false merges (default 1)
 #
 # --validate is the one to run on a real capture before trusting any of this:
-# it scores the clustering against the devices that do not randomise their MAC,
+# it scores the clustering against the devices that do not randomize their MAC,
 # which are ground truth requiring no inference at all.
 [ -f .env ] && source .env
 source ./seqgraph_functions.sh

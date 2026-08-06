@@ -5,7 +5,7 @@
 # Real-Time Highstreet Footfall from Wi-Fi Probe Requests" (UCL, 2019).
 #
 # The 12-bit sequence counter in the MAC header increments per frame and is not
-# reset when a device rotates its randomised MAC address. So a chain of probe
+# reset when a device rotates its randomized MAC address. So a chain of probe
 # requests with steadily increasing sequence numbers, close together in time, is
 # one device -- even when every frame in the chain carries a different source
 # address. That is the property this pass exploits.
@@ -67,7 +67,7 @@ SEQ_MODULUS=4096
 # the two frames came from different devices -- which turns the confidence check
 # from something that reports bad merges after the fact into something that
 # prevents them. Frames with no IE data are never blocked, only ones that
-# positively disagree. Set to 0 to reproduce the ungated behaviour.
+# positively disagree. Set to 0 to reproduce the ungated behavior.
 SEQGRAPH_GATE_IE=${SEQGRAPH_GATE_IE:-1}
 
 # seqgraph_assign [--recompute]
@@ -199,7 +199,7 @@ SQL
 	echo "seqgraph_assign stop $(date +"%H:%M:%S.%3N")"
 	echo "  devices identified: $(mysql -N probeprint <<< "select count(*) from devices;")"
 	echo "  frames assigned:    $(mysql -N probeprint <<< "select count(*) from ssid where device_id is not null;")"
-	echo "  randomisation defeated on: $(mysql -N probeprint <<< "select count(*) from devices where mac_count > 1;") device(s)"
+	echo "  randomization defeated on: $(mysql -N probeprint <<< "select count(*) from devices where mac_count > 1;") device(s)"
 	echo "  low confidence (suspect merge): $(mysql -N probeprint <<< "select count(*) from devices where confidence='low';")"
 }
 
@@ -252,9 +252,9 @@ SQL
 #
 # Measure the clustering against ground truth that is already in the data.
 #
-# Most devices randomise their MAC, but a minority -- IoT, older hardware, some
+# Most devices randomize their MAC, but a minority -- IoT, older hardware, some
 # laptops -- do not. For those the MAC *is* the identity, with no inference
-# involved, which makes them free labelled data on every real capture:
+# involved, which makes them free labeled data on every real capture:
 #
 #   two different globally-unique MACs in one cluster  -> provable FALSE MERGE
 #   one globally-unique MAC split across two clusters  -> provable FALSE SPLIT
@@ -263,13 +263,13 @@ SQL
 # environment, rather than a number from a synthetic fixture. Use it to tune
 # alpha and beta per site instead of guessing.
 #
-# Randomised addresses are the locally-administered ones: bit 1 of the first
+# Randomized addresses are the locally-administered ones: bit 1 of the first
 # octet set, and bit 0 clear for a unicast source, so the second hex digit is
 # one of 2, 6, a, e.
 seqgraph_validate () {
 	local static_pred="substr(wlan_sa,2,1) not in ('2','6','a','e')"
 
-	echo "== sequence graph validation against non-randomised MACs =="
+	echo "== sequence graph validation against non-randomized MACs =="
 	echo "   (alpha=${SEQGRAPH_ALPHA}s beta=${SEQGRAPH_BETA} gate_ie=${SEQGRAPH_GATE_IE})"
 	echo
 
@@ -277,7 +277,7 @@ seqgraph_validate () {
 	static_macs=$(mysql -N probeprint <<< "select count(distinct wlan_sa) from ssid where device_id is not null and $static_pred;")
 
 	if [ "${static_macs:-0}" -eq 0 ]; then
-		echo "   no non-randomised MACs in this capture -- nothing to validate against"
+		echo "   no non-randomized MACs in this capture -- nothing to validate against"
 		return 0
 	fi
 
@@ -349,7 +349,7 @@ update devices d
 -- Vendor is only ever partially knowable. An IE fingerprint identifies a device
 -- class, but nothing maps that class to a model -- there is no public corpus of
 -- 802.11 probe IE signatures. What *is* resolvable is the manufacturer OUI,
--- either from a non-randomised MAC (mac2vendor fills ssid.vendor) or from the
+-- either from a non-randomized MAC (mac2vendor fills ssid.vendor) or from the
 -- vendor-specific IE. '.' is mac2vendor's "looked up, found nothing" marker.
 update devices d
    set d.vendor = (select s.vendor
@@ -384,32 +384,48 @@ assign_aliases () {
 		return 1
 	fi
 
-	local id key ai ni base candidate n taken
+	local id key ai ni base candidate n
 
-	while IFS='|' read -r id key; do
-		[ -z "$id" ] && continue
+	# Collision detection is done in memory against a set of names already in
+	# use, and the updates are emitted as one batch.
+	#
+	# The obvious shape -- query "is this name taken" and UPDATE, per device --
+	# costs two mysql process spawns per device. On a real capture that produced
+	# 11,448 devices that is ~23,000 spawns and dominates the runtime of the
+	# whole pass; at a tighter alpha, which yields 65,000 devices, it is far
+	# worse. Two queries and one piped batch instead.
+	local -A used=()
+	while IFS= read -r a; do
+		[ -n "$a" ] && used["$a"]=1
+	done < <(mysql -N probeprint <<< "select alias from devices where alias is not null;")
 
-		# Two independent slices of the key, so the slots vary independently.
-		ai=$(( 16#${key:0:6} % ${#ADJ[@]} ))
-		ni=$(( 16#${key:6:6} % ${#NOUN[@]} ))
-		base="${ADJ[$ai]} ${NOUN[$ni]}"
+	{
+		echo "start transaction;"
+		while IFS='|' read -r id key; do
+			[ -z "$id" ] && continue
 
-		candidate="$base"
-		n=1
-		while true; do
-			taken=$(mysql -N probeprint <<< "select count(*) from devices where alias = \"$candidate\";")
-			[ "${taken:-0}" = "0" ] && break
-			n=$((n + 1))
-			candidate="$base $n"
-		done
+			# Two independent slices of the key, so the slots vary independently.
+			ai=$(( 16#${key:0:6} % ${#ADJ[@]} ))
+			ni=$(( 16#${key:6:6} % ${#NOUN[@]} ))
+			base="${ADJ[$ai]} ${NOUN[$ni]}"
 
-		mysql probeprint <<< "update devices set alias = \"$candidate\" where id = $id;"
-	done <<< "$(mysql -N probeprint <<< "select concat_ws('|', id, device_key) from devices where alias is null order by id;")"
+			candidate="$base"
+			n=1
+			while [ -n "${used[$candidate]:-}" ]; do
+				n=$((n + 1))
+				candidate="$base $n"
+			done
+			used["$candidate"]=1
+
+			printf 'update devices set alias="%s" where id=%s;\n' "$candidate" "$id"
+		done < <(mysql -N probeprint <<< "select concat_ws('|', id, device_key) from devices where alias is null order by id;")
+		echo "commit;"
+	} | mysql probeprint
 }
 
 # seqgraph_report
 #
-# A device spanning several MAC addresses is a randomisation undone. A device
+# A device spanning several MAC addresses is a randomization undone. A device
 # flagged low confidence is one to distrust before acting on it, so those sort
 # to the top.
 seqgraph_report () {

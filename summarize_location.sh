@@ -1,5 +1,5 @@
 #!/bin/bash
-# Look up and summarise WiGLE locations for SSIDs.
+# Look up and summarize WiGLE locations for SSIDs.
 #
 # Usage:
 #   ./summarize_location.sh <ssid_hex>   one SSID

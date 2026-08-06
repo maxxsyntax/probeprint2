@@ -11,7 +11,7 @@
 -- unrelated devices, so they must not chain together in the sequence graph.
 -- When they were all stamped within microseconds of each other with sequential
 -- seq numbers, the graph merged all 19 into a single device -- correct
--- behaviour on incoherent input, and a good illustration of the algorithm's
+-- behavior on incoherent input, and a good illustration of the algorithm's
 -- real false-merge mode in dense environments.
 -- ---------------------------------------------------------------------------
 
@@ -80,7 +80,7 @@ insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
   (lower(hex('BurstCharlie')), '0a:00:00:00:00:01', '1700000200.300000', '-51', 2437, 202, '0x03fbfa00'),
   (lower(hex('BurstDelta')),   '0a:00:00:00:00:01', '1700000200.400000', '-51', 2437, 203, '0x03fbfa00');
 
--- Burst by seq + rssi: distinct MACs (randomised), sequence numbers within the
+-- Burst by seq + rssi: distinct MACs (randomized), sequence numbers within the
 -- +60 window, RSSI within +/-2. Exercises ssid2bursts-seq, which never ran
 -- before `seq!=null` was fixed, and the rssi varchar comparison.
 insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
@@ -107,13 +107,13 @@ insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
 -- ---------------------------------------------------------------------------
 
 -- One device across three MAC rotations. Three bursts 50s apart, each under a
--- different randomised address, with the sequence counter running continuously
+-- different randomized address, with the sequence counter running continuously
 -- through all of them. The graph must join all eight frames into ONE device_id
 -- spanning three MACs -- the old ssid2bursts-seq could never do this, because
 -- its window was a single second.
 --
 -- The addresses are locally administered (second hex digit 2, 6, a) as a real
--- randomising device's would be. That matters: seqgraph_validate treats
+-- randomizing device's would be. That matters: seqgraph_validate treats
 -- globally-unique MACs as ground truth, so using them here would make this
 -- fixture look like three separate real devices wrongly merged.
 -- All eight frames carry an identical IE signature, as one physical device
@@ -136,7 +136,7 @@ insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
   (lower(hex('OtherPhone')), '0e:00:00:00:00:01', '1700002000.000000', '-60', 2437, 1200, '0x03fbfa00'),
   (lower(hex('OtherPhone')), '0e:00:00:00:00:01', '1700002000.100000', '-60', 2437, 1201, '0x03fbfa00');
 
--- Two DIFFERENT physical devices, both with globally-unique (non-randomised)
+-- Two DIFFERENT physical devices, both with globally-unique (non-randomized)
 -- MACs, interleaved in time with consecutive sequence numbers. This is the
 -- algorithm's real-world false-merge mode: nothing in the timing or sequence
 -- data distinguishes them, so an ungated graph chains all four frames into one
@@ -157,3 +157,18 @@ insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
   (lower(hex('WrapNet')), '82:00:00:00:00:01', '1700003000.000000', '-65', 2437, 4090, '0x03fbfa00'),
   (lower(hex('WrapNet')), '82:00:00:00:00:01', '1700003000.100000', '-65', 2437, 4094, '0x03fbfa00'),
   (lower(hex('WrapNet')), '86:00:00:00:00:02', '1700003000.200000', '-65', 2437,    2, '0x03fbfa00');
+
+-- ---------------------------------------------------------------------------
+-- Directed probe requests (geolocate_functions.sh)
+--
+-- Most probes are undirected and carry ff:ff:ff:ff:ff:ff as the destination.
+-- A directed probe -- for a hidden network, or an AP the device already knows
+-- -- addresses the AP itself, so wlan_da is that AP's BSSID. That is the only
+-- route by which a BSSID ever reaches this pipeline, and BSSIDs are what every
+-- positioning service except WiGLE is keyed on.
+-- ---------------------------------------------------------------------------
+insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht, wlan_da) values
+  (lower(hex('OneCity')),   '92:00:00:00:00:01', '1700006000.000000', '-50', 2437, 700, '0x1', 'de:ad:be:ef:00:01'),
+  (lower(hex('OneCity')),   '92:00:00:00:00:01', '1700006000.100000', '-50', 2437, 701, '0x1', 'de:ad:be:ef:00:01'),
+  (lower(hex('ManyCities')),'96:00:00:00:00:02', '1700006100.000000', '-55', 2437, 800, '0x1', 'de:ad:be:ef:00:02'),
+  (lower(hex('HiddenNet')), '9a:00:00:00:00:03', '1700006200.000000', '-60', 2437, 900, '0x1', 'ff:ff:ff:ff:ff:ff');

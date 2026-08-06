@@ -57,7 +57,7 @@ SQL
 			unknown) printf '  (unverified: no IE data)' ;;
 		esac
 		printf '\n'
-		[ "$macs" -gt 1 ] 2>/dev/null && printf '  randomisation defeated: %s addresses, %s networks\n' "$macs" "$ssids"
+		[ "$macs" -gt 1 ] 2>/dev/null && printf '  randomization defeated: %s addresses, %s networks\n' "$macs" "$ssids"
 	done
 }
 

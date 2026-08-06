@@ -37,10 +37,9 @@ source ./location_functions.sh
 #functions
 ssid2ssid_intel () {
 #	while true; do 
-echo Populating ssid_intel
+echo ssid2ssid_intel start $(date +"%H:%M:%S.%3N")
 mysql probeprint <<< "insert ignore into ssid_intel (ssid_hex) select distinct ssid_hex from ssid;"
-sleep 5; 
-#done
+echo ssid2ssid_intel stop $(date +"%H:%M:%S.%3N")
 }
 
 
@@ -152,12 +151,37 @@ while read ssid_hex; do
 	#echo $ssid_hex $name
 done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where ssid_hex like \"%46616d696c79\" and is_name is null;")
 
-#iterate through name list
-while read name_hex;
-do
-	name=$(echo $name_hex | xxd -r -p)
-	mysql probeprint <<< "update ssid_intel set is_name=\"$name\" where (ssid_hex like \"$name_hex%\" or ssid_hex like \"%$name_hex%\" or ssid_hex like \"%$name_hex\") and is_name is null;"
-done < lists/names_hex.txt
+# Whole-token name matching. The old form matched a name as a substring
+# anywhere in the SSID (like "%name%"), so short names tagged unrelated
+# networks: "Al" matched "Portal", "Alarm", "Balcony", and the fragment was
+# written into is_name as though it were a person. A name now matches only as a
+# complete token, delimited by a word boundary -- the start or end of the SSID,
+# or a separator byte (space, -, _, .). Decode each SSID once, split it into
+# tokens, and compare whole tokens against the name set.
+local -A nameset=()
+local nm
+while read -r nm; do
+	nm=${nm,,}
+	# Skip 1-2 character names: too short to match without heavy noise.
+	[ ${#nm} -ge 3 ] && nameset[$nm]=1
+done < lists/names.txt
+
+local ssid t tl esc
+local -a toks
+while read -r ssid_hex; do
+	ssid=$(printf '%s' "$ssid_hex" | xxd -r -p 2>/dev/null | tr -cd '[:print:]')
+	# IFS scoped to this read only, so it cannot leak into other functions.
+	IFS=' -_.' read -r -a toks <<< "$ssid"
+	for t in "${toks[@]}"; do
+		tl=${t,,}
+		if [[ -n ${nameset[$tl]:-} ]]; then
+			# Double any single quote for the SQL string literal.
+			esc=${t//\'/\'\'}
+			mysql probeprint <<< "update ssid_intel set is_name='$esc' where ssid_hex=\"$ssid_hex\";"
+			break
+		fi
+	done
+done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where is_name is null;")
 mysql probeprint <<< "update ssid_intel set category=\"NAME\" where is_name!='' and is_name is not null;"
 mysql probeprint <<< "update ssid_intel set is_name=0 where is_name is null;"
 echo check_name stop $(date +"%H:%M:%S.%3N")
@@ -256,156 +280,20 @@ make_ignore_list () {
 			echo "$line" >> lists/ignore.txt
 		fi
 	done <<<$(mysql -N probeprint <<< "select ssid_hex from ssid;"  | sort | uniq -c | sort -nr | head -n30 |tr -s \   | cut -d \  -f3)
-mysql probeprint <<< "select ssid_hex from ssid_intel where category=\"OTHER_ANOMALOUS\";" >> lists/ignore.txt
+mysql -N probeprint <<< "select ssid_hex from ssid_intel where category=\"OTHER_ANOMALOUS\";" >> lists/ignore.txt
 echo ignore_check end $(date +"%H:%M:%S.%3N")
 }
 
 
-score () {
-	
-	while read -r line; do
-#echo $line
-IFS='|' read -r ssid_hex category <<<"$line"
 
 
-case $category in
-TECH_PHONE)
-score=2
-;;
-TECH_CPE)
-score=1
-;;
-TECH_PRINTER)
-score=1
-;;
-TECH_OTHER)
-score=1
-;;
-LOCATION_SPECIFIC)
-score=2
-;;
-LOCATION|LOCATION_VAGUE)
-score=1
-;;
-BIZ_HOTEL)
-score=1
-;;
-BIZ_EATERY)
-score=1
-;;
-BIZ_OTHER)
-score=1
-;;
-BIZ_INSTITUTION)
-score=2
-;;
-BIZ_COWORK)
-score=2
-;;
-BIZ_HEALTHCARE)
-score=2
-;;
-BIZ_CLUB)
-score=2
-;;
-NAME)
-score=1
-;;
-NAME_SPECIFIC)
-score=2
-;;
-TRAVEL)
-score=1
-;;
-TRAVEL_AIRPORT)
-score=1
-;;
-INDUSTRY_ORG)
-score=2
-;;
-INDUSTRY_VIP)
-score=2
-;;
-INDUSTRY_PERSON)
-score=2
-;;
-INDUSTRY_EVENT)
-score=1
-;;
-INDUSTRY_VENUE)
-score=1
-;;
-INDUSTRY_VC)
-score=2
-;;
-CULTURE_CAR)
-score=2
-;;
-CULTURE_RELIGION)
-score=1
-;;
-CULTURE_MUSIC)
-score=1
-;;
-CULTURE_OTHER)
-score=1
-;;
-CULTURE_LANGUAGE)
-score=2
-;;
-CULTURE_LUXURY)
-score=2
-;;
-CULTURE_*)
-score=2
-;;
-OTHER_ANOMALOUS)
-score=0
-;;
-OTHER_COMMON)
-score=0
-;;
-OTHER_CREATIVESSID)
-score=1
-;;
-OTHER_UNKNOWN)
-score=0
-;;
-BIZ_STAFF)
-score=2
-;;
-OTHER_HOUSEHOLD)
-score=2
-;;
-TECH_GUEST)
-score=1
-;;
-TECH_IOT)
-score=1
-;;
-OTHER_NUMERIC)
-score=0
-;;
-OTHER_FQDN)
-score=1
-;;
-esac
-#echo $rowid $category $score
-mysql probeprint <<< "update ssid_intel set score=\"$score\" where ssid_hex=\"$ssid_hex\";"
-done <<<$(mysql -N probeprint <<< "select concat_ws('|',ssid_hex,category) from ssid_intel where score is null and category is not null;")
-}
 
 
-bump_score () {
-while read line; 
-do 
-score=$(mysql -N probeprint <<< "select score from ssid_intel where ssid_hex=\"$line\";")
-((score++))
-mysql probeprint <<< "update ssid_intel set score=\"$score\" where ssid_hex=\"$line\";"
-#echo updating score for row $line
-done <<< $(mysql -N probeprint <<< "select ssid_hex from ssid_intel where is_oneloc=1;")
-}
 
+# score() and bump_score() were removed here: nothing in the pipeline or tests
+# called them, and they were the only writers of ssid_intel.score. The column is
+# retained (build_dbs.sh, unused) rather than dropped. Identifiability is now
+# expressed by rarity / pnl_rarity, not a hand-tuned per-category score.
 
 
 # mac2vendor now lives in vendor_functions.sh, sourced at the top of this file,

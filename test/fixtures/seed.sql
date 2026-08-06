@@ -172,3 +172,70 @@ insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht, wlan_da) values
   (lower(hex('OneCity')),   '92:00:00:00:00:01', '1700006000.100000', '-50', 2437, 701, '0x1', 'de:ad:be:ef:00:01'),
   (lower(hex('ManyCities')),'96:00:00:00:00:02', '1700006100.000000', '-55', 2437, 800, '0x1', 'de:ad:be:ef:00:02'),
   (lower(hex('HiddenNet')), '9a:00:00:00:00:03', '1700006200.000000', '-60', 2437, 900, '0x1', 'ff:ff:ff:ff:ff:ff');
+
+-- ---------------------------------------------------------------------------
+-- Recategorization fixtures (recategorize_functions.sh)
+--
+-- Names that categorize() leaves as OTHER_UNKNOWN because no keyword matches,
+-- but which are still placeable from their shape or from the operator brand
+-- list in lists/cpe_isp.txt.
+-- ---------------------------------------------------------------------------
+insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
+  -- operator brands: single national market
+  (lower(hex('Bbox-7A21')),        'a2:00:00:00:01:01', '1700020000.000000', '-50', 2437, 10, '0x1'),
+  (lower(hex('BTHub6-XKQP')),      'a2:00:00:00:01:02', '1700020200.000000', '-51', 2437, 11, '0x1'),
+  (lower(hex('MEO_WiFi_2E')),      'a2:00:00:00:01:03', '1700020400.000000', '-52', 2437, 12, '0x1'),
+  -- operator brand spanning several markets
+  (lower(hex('MOVISTAR_A4F2')),    'a2:00:00:00:01:04', '1700020600.000000', '-53', 2437, 13, '0x1'),
+  -- hardware vendor: must NOT be given a country
+  (lower(hex('NETGEAR58-Guest')),  'a2:00:00:00:01:05', '1700020800.000000', '-54', 2437, 14, '0x1'),
+  -- shape only: trailing MAC fragment, no recognizable brand
+  (lower(hex('Brightwood-3F17')),    'a2:00:00:00:01:06', '1700021000.000000', '-55', 2437, 15, '0x1'),
+  -- shape only: band suffix
+  (lower(hex('Jacaranda-5G')),     'a2:00:00:00:01:07', '1700021200.000000', '-56', 2437, 16, '0x1'),
+  -- a phone model that merely contains 5G mid-name must NOT be caught
+  (lower(hex('Galaxy A53 5G 0F92')),'a2:00:00:00:01:08','1700021400.000000', '-57', 2437, 17, '0x1'),
+  -- guest access, non-English
+  (lower(hex('La Maison-Invitados')),'a2:00:00:00:01:09','1700021600.000000','-58', 2437, 18, '0x1'),
+  -- consumer appliance
+  (lower(hex('LEDnet00040486FF')), 'a2:00:00:00:01:0a', '1700021800.000000', '-59', 2437, 19, '0x1'),
+  -- digits only
+  (lower(hex('4085551234')),       'a2:00:00:00:01:0b', '1700022000.000000', '-60', 2437, 20, '0x1'),
+  -- genuinely unplaceable: must stay OTHER_UNKNOWN
+  (lower(hex('Quebrador San Miguel')),'a2:00:00:00:01:0c','1700022200.000000','-61',2437, 21, '0x1');
+
+-- Mined-pattern fixtures: workplace, residence and generic network markers.
+insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
+  (lower(hex('Ukrtelecom_4471')), 'a6:00:00:00:02:01', '1700030000.000000', '-50', 2437, 30, '0x1'),
+  (lower(hex('Torres Staff')),    'a6:00:00:00:02:02', '1700030200.000000', '-51', 2437, 31, '0x1'),
+  (lower(hex('Ruiz Family')),     'a6:00:00:00:02:03', '1700030400.000000', '-52', 2437, 32, '0x1'),
+  (lower(hex('Alvarez_network')), 'a6:00:00:00:02:04', '1700030600.000000', '-53', 2437, 33, '0x1'),
+  (lower(hex('Redwood Lodge')),   'a6:00:00:00:02:05', '1700030800.000000', '-54', 2437, 34, '0x1');
+
+-- Latin-script language markers. check_language() detects languages by script
+-- and is blind to all of these; language_functions.sh reads vocabulary instead.
+insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht) values
+  (lower(hex('Netzwerk Mueller')),  'aa:00:00:00:03:01', '1700040000.000000', '-50', 2437, 40, '0x1'),
+  (lower(hex('Huis van Dijk')),     'aa:00:00:00:03:02', '1700040200.000000', '-51', 2437, 41, '0x1'),
+  (lower(hex('Cocina Abajo')),      'aa:00:00:00:03:03', '1700040400.000000', '-52', 2437, 42, '0x1'),
+  (lower(hex('Maison Dupont')),     'aa:00:00:00:03:04', '1700040600.000000', '-53', 2437, 43, '0x1'),
+  (lower(hex('Casa Bonita')),       'aa:00:00:00:03:05', '1700040800.000000', '-54', 2437, 44, '0x1'),
+  (lower(hex('Redwood Cabin')),     'aa:00:00:00:03:06', '1700041000.000000', '-55', 2437, 45, '0x1'),
+  (lower(hex('Netzwerk Cucina')),   'aa:00:00:00:03:07', '1700041200.000000', '-56', 2437, 46, '0x1');
+
+-- ---------------------------------------------------------------------------
+-- A device with a full profile, for the in-range operator display.
+--
+-- One person's preferred network list: household, employer, a geolocated
+-- network, an airport, a hotel, an eatery and a home ISP -- probed as one
+-- burst so display_inrange sees them together.
+-- ---------------------------------------------------------------------------
+insert into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht, ht, extcap, vendor_oui, ie_order) values
+  (lower(hex('Familia Restrepo')), 'be:00:00:00:04:01', '1700050000.000000', '-48', 2437, 4000, '0x1', '0x09ef', '0x04', '6130', '0,1,45,127,221'),
+  (lower(hex('Vertex Labs Staff')),'be:00:00:00:04:01', '1700050000.100000', '-48', 2437, 4001, '0x1', '0x09ef', '0x04', '6130', '0,1,45,127,221'),
+  (lower(hex('OneCity')),          'be:00:00:00:04:01', '1700050000.200000', '-48', 2437, 4002, '0x1', '0x09ef', '0x04', '6130', '0,1,45,127,221'),
+  (lower(hex('AMS Airport Free')), 'be:00:00:00:04:01', '1700050000.300000', '-48', 2437, 4003, '0x1', '0x09ef', '0x04', '6130', '0,1,45,127,221'),
+  (lower(hex('Hilton Garden Inn')),'be:00:00:00:04:01', '1700050000.400000', '-48', 2437, 4004, '0x1', '0x09ef', '0x04', '6130', '0,1,45,127,221'),
+  (lower(hex('Starbucks WiFi')),   'be:00:00:00:04:01', '1700050000.500000', '-48', 2437, 4005, '0x1', '0x09ef', '0x04', '6130', '0,1,45,127,221'),
+  (lower(hex('Bbox-7A21')),        'be:00:00:00:04:01', '1700050000.600000', '-48', 2437, 4006, '0x1', '0x09ef', '0x04', '6130', '0,1,45,127,221'),
+  (lower(hex('Cocina Abajo')),     'be:00:00:00:04:01', '1700050000.700000', '-48', 2437, 4007, '0x1', '0x09ef', '0x04', '6130', '0,1,45,127,221');

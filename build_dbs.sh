@@ -191,6 +191,32 @@ mysql probeprint -e "alter table ssid_intel add column if not exists geo_accurac
 # "MyNet" with "mynet". is_oneloc is left as it is so existing rows keep their
 # meaning, but prefer geo_match_count.
 mysql probeprint -e "alter table ssid_intel add column if not exists geo_match_count int default null;"
+
+# ---------------------------------------------------------------------------
+# Which operator's equipment a TECH_CPE SSID belongs to, from lists/cpe_isp.txt.
+#
+# cpe_scope says how much the match is worth, and exists so a claim is never
+# stronger than the evidence:
+#   country   one national market -- the strongest residential-origin signal
+#             this pipeline produces
+#   region    one operator across several markets
+#   global    present in too many markets to narrow
+#   vendor    a hardware manufacturer, carrying NO geography. Recorded so a
+#             NETGEAR router is never read as evidence of a location.
+#   academic  not CPE, but a strong affiliation signal (eduroam)
+# ---------------------------------------------------------------------------
+mysql probeprint -e "alter table ssid_intel add column if not exists cpe_isp varchar(48) default null;"
+mysql probeprint -e "alter table ssid_intel add column if not exists cpe_country varchar(64) default null;"
+mysql probeprint -e "alter table ssid_intel add column if not exists cpe_scope varchar(8) default null;"
+mysql probeprint -e "create index if not exists idx_ssid_intel_cpe on ssid_intel (cpe_scope, cpe_country);"
+
+# Language of the SSID text, kept separate from category because the two are
+# orthogonal -- "Familie Mueller" is a household AND German. lang_scope says
+# whether the evidence names one language, only a family of them, or is merely
+# suggestive. See language_functions.sh.
+mysql probeprint -e "alter table ssid_intel add column if not exists lang varchar(32) default null;"
+mysql probeprint -e "alter table ssid_intel add column if not exists lang_scope varchar(10) default null;"
+mysql probeprint -e "create index if not exists idx_ssid_intel_lang on ssid_intel (lang_scope, lang);"
 mysql probeprint -e "alter table ssid_intel add column if not exists street_address varchar(255) default null;"
 mysql probeprint -e "create index if not exists idx_ssid_intel_geo on ssid_intel (lat, lon);"
 

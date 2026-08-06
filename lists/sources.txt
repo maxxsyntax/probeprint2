@@ -7,3 +7,8 @@
 #adjectives.txt / nouns.txt - hand-curated for device alias generation
 #  (seqgraph_functions.sh:assign_aliases). Not sourced from anywhere; chosen to
 #  be neutral, short, and unambiguous when read aloud. 347 x 282 = 97,854 names.
+#lang_words.txt - hand-curated language markers for Latin-script SSIDs
+#  (language_functions.sh). Not downloaded: general frequency lists are
+#  dominated by function words that collide across languages (de, la, in, an,
+#  no, van), and SSID vocabulary is a narrow domain -- home, family, network,
+#  guest, rooms, colors, pets -- that such lists represent poorly.

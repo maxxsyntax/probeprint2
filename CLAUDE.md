@@ -215,7 +215,7 @@ invokes `build_ssid.sh` by absolute path, so that distinction is load-bearing.
 | `vendor_functions.sh` | `mac2vendor` — OUI → vendor |
 | `rarity_functions.sh` | `load_ssid_frequencies`, `score_rarity` — continuous SSID rarity |
 | `seqgraph_functions.sh` | `seqgraph_assign`, `assign_aliases` — device identity across MAC rotation |
-| `display_functions.sh` | `rssi_range`, `device_banner`, `display_recent/devices/device` |
+| `display_functions.sh` | `rssi_range`, `device_profile_rows`, `display_inrange` — the operator view |
 | `bursts_functions.sh` | Burst grouping by MAC / sequence / VHT |
 | `ssid_intel_functions.sh` | The remaining enrichment passes; sourced by `build_ssid_intel.sh` |
 | `standalone_*.sh` | One concern each, runnable directly |

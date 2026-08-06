@@ -61,6 +61,135 @@ SQL
 	done
 }
 
+# --- the in-range profile view ----------------------------------------------
+#
+# One block per device currently probing, nearest first, with everything the
+# pipeline knows about that fingerprint assembled from its preferred network
+# list. This is the view the README describes: vetting someone in front of you
+# against what their device is broadcasting.
+#
+# Fields are separated by char(31), the ASCII unit separator, rather than a
+# printable character. SSIDs are arbitrary bytes and routinely contain '|', ','
+# and tabs, any of which would split a row in the wrong place.
+
+# device_profile_rows <cutoff_epoch>
+# One char(31)-separated row per device heard since the cutoff.
+device_profile_rows () {
+	local cutoff=$1
+	dq <<SQL
+select concat_ws(char(31),
+    d.id,
+    ifnull(d.alias, concat('device ', d.id)),
+    ifnull(d.confidence, 'unknown'),
+    ifnull(d.vendor, ''),
+    r.best_rssi,
+    d.pnl_size,
+    ifnull(round(d.pnl_rarity, 0), 0),
+    ifnull((select group_concat(distinct i.is_name order by i.is_name separator ', ')
+              from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
+             where ds.device_id = d.id and i.is_name is not null
+               and i.is_name not in ('0','')), ''),
+    ifnull((select group_concat(distinct unhex(ds.ssid_hex) separator ', ')
+              from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
+             where ds.device_id = d.id and i.category = 'OTHER_HOUSEHOLD'), ''),
+    ifnull((select group_concat(distinct unhex(ds.ssid_hex) separator ', ')
+              from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
+             where ds.device_id = d.id
+               and i.category in ('BIZ_STAFF','INDUSTRY_ORG','BIZ_COWORK','BIZ_INSTITUTION')), ''),
+    ifnull((select group_concat(distinct i.lang separator ', ')
+              from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
+             where ds.device_id = d.id and i.lang_scope = 'language'), ''),
+    ifnull((select group_concat(distinct concat(i.cpe_isp,' (',i.cpe_country,')') separator ', ')
+              from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
+             where ds.device_id = d.id and i.cpe_scope = 'country'), ''),
+    -- Whichever level of detail geolocation actually reached: a reverse-geocoded
+    -- street address if Nominatim ran, else the WiGLE text summary, else the raw
+    -- coordinates. Empty is only correct when none of the three exists.
+    ifnull((select group_concat(distinct coalesce(
+                      nullif(i.street_address,''),
+                      nullif(nullif(nullif(nullif(nullif(i.location,'0'),'no file'),'no results'),'too many results'),'no match for ssid'),
+                      case when i.lat is not null then concat(round(i.lat,4),',',round(i.lon,4)) end
+                   ) separator '; ')
+              from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
+             where ds.device_id = d.id
+               and (i.street_address is not null or i.lat is not null
+                    or i.location not in ('0','no file','no results','too many results','no match for ssid'))), ''),
+    ifnull((select group_concat(distinct i.is_airport separator '; ')
+              from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
+             where ds.device_id = d.id and i.is_airport is not null
+               and i.is_airport not in ('0','')), ''),
+    ifnull((select group_concat(distinct unhex(ds.ssid_hex) separator ', ')
+              from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
+             where ds.device_id = d.id and i.category in ('BIZ_HOTEL','TRAVEL')), ''),
+    ifnull((select group_concat(distinct unhex(ds.ssid_hex) separator ', ')
+              from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
+             where ds.device_id = d.id and i.category = 'BIZ_EATERY'), ''),
+    ifnull((select group_concat(distinct unhex(ds.ssid_hex) separator ', ')
+              from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
+             where ds.device_id = d.id and i.rarity > 15
+               and i.category not in ('TECH_CPE','OTHER_ANOMALOUS')), ''),
+    d.mac_count)
+  from devices d
+  join (select device_id, max(cast(rssi as signed)) as best_rssi
+          from ssid
+         where device_id is not null
+           and cast(time as decimal(20,7)) > $cutoff
+         group by device_id) r on r.device_id = d.id
+ order by r.best_rssi desc
+ limit 40;
+SQL
+}
+
+# display_inrange [seconds]
+#
+# The operator view. Nearest device first, with its profile.
+display_inrange () {
+	local window=${1:-30}
+	local cutoff
+	cutoff=$(date +%s --date="$window sec ago")
+
+	local id alias conf vendor rssi pnl rarity names household employer \
+	      lang market places airports travel eatery rare macs
+	local shown=0
+
+	while IFS=$'\037' read -r id alias conf vendor rssi pnl rarity names household \
+	                          employer lang market places airports travel eatery rare macs; do
+		[ -z "$id" ] && continue
+		shown=$((shown + 1))
+
+		printf '%s  [%s]' "$alias" "$(rssi_range "$rssi")"
+		[ -n "$vendor" ] && printf '  %s' "$vendor"
+		printf '\n'
+
+		# A low-confidence device spans several IE signatures, which one physical
+		# device cannot do. Everything below it is then a blend of two people's
+		# networks, so the warning has to come before the profile, not after.
+		case "$conf" in
+			low)     printf '  !! UNRELIABLE: this fingerprint spans several devices -- treat the profile as mixed\n' ;;
+			unknown) printf '  (unverified: no IE data to corroborate)\n' ;;
+		esac
+		[ "${macs:-1}" -gt 1 ] 2>/dev/null && printf '  seen under %s rotating addresses\n' "$macs"
+
+		[ -n "$names" ]     && printf '  Name        : %s\n' "$names"
+		[ -n "$household" ] && printf '  Household   : %s\n' "$household"
+		[ -n "$employer" ]  && printf '  Employer    : %s\n' "$employer"
+		[ -n "$lang" ]      && printf '  Language    : %s\n' "$lang"
+		[ -n "$market" ]    && printf '  Home ISP    : %s\n' "$market"
+		[ -n "$places" ]    && printf '  Places      : %s\n' "$places"
+		[ -n "$airports" ]  && printf '  Airports    : %s\n' "$airports"
+		[ -n "$travel" ]    && printf '  Hotels/tvl  : %s\n' "$travel"
+		[ -n "$eatery" ]    && printf '  Eateries    : %s\n' "$eatery"
+		[ -n "$rare" ]      && printf '  Rare nets   : %s\n' "$rare"
+
+		# pnl_rarity is how identifying the whole list is. A high score means
+		# this person could be picked out of a large population by their
+		# networks alone.
+		printf '  %s networks, identifiability %s\n\n' "$pnl" "$rarity"
+	done <<< "$(device_profile_rows "$cutoff")"
+
+	[ "$shown" -eq 0 ] && echo "(nothing in range in the last ${window}s)"
+}
+
 # display_recent [seconds]
 # Everything seen in the last N seconds, grouped by the device behind it.
 display_recent () {

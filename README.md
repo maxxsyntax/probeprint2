@@ -32,10 +32,58 @@ A real time application of intelligence gained from passively monitoring wireles
 
 
 
+## The three modules
+
+probeprint2 runs as three stages:
+
+1. **Capture** — `build_ssid.sh` sniffs 802.11 probe requests off a monitor-mode
+   interface (via tshark) into the `probeprint` database. `pcap2db.sh` backfills
+   the same way from saved captures.
+2. **Correlate & enrich** — `process.sh` turns raw SSIDs into intel: category,
+   name, language, rarity, coordinates, and device identity across MAC rotation.
+   It is offline-first — live WiGLE lookups are a separate, opt-in step.
+3. **Heads-up display** — `display.sh` shows who is in range now, one block per
+   device, with the traits its preferred network list reveals.
+
+## Configuration
+
+Every script reads `.env` from the repo root, and it is gitignored because it
+holds credentials. Copy the template and fill it in:
+
+```
+cp .env.example .env
+$EDITOR .env
+```
+
+At minimum set `APIKEY` (WiGLE `name:token`) and `INF` (your monitor-mode
+interface); leave `online=0` unless you want live lookups during capture.
+`.env.example` documents every option, including geolocation, sequence-graph
+tuning, and engagement-specific targeting.
+
 ## HOW TO
-put wireless interface in monitor mode
-build database with build_dbs.sh
-run build_ssid.sh
+
+Run everything from the repo root.
+
+```
+# 1. one-time: create or migrate the database (idempotent)
+./build_dbs.sh
+
+# 2a. live capture (interface must already be in monitor mode)
+./build_ssid.sh
+# 2b. or backfill from saved captures instead
+./pcap2db.sh capture1.pcap capture2.pcap
+
+# 3. enrich everything captured so far -- offline, incremental, safe to re-run
+./process.sh
+# fetch new WiGLE locations separately, minding the daily quota
+./summarize_location.sh --new
+
+# 4. display who is in range
+./display.sh                     # live view (default; ^C to quit)
+./display.sh devices             # roster of every device
+./display.sh device <id|alias>   # one device's full profile and network list
+./display.sh recent [seconds]    # everything seen in the last N seconds
+```
 
 
 

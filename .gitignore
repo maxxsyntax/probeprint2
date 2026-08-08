@@ -13,3 +13,4 @@ ignore.txt
 notes.txt
 test/out/
 test/fixtures/*.pcap
+logs/

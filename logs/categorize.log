@@ -1,4 +1,0 @@
-categorize start 08:32:43.528
-./ssid_intel_functions.sh: line 84: [[: invalid regular expression `\': Trailing backslash
-./ssid_intel_functions.sh: line 84: [[: invalid regular expression `ibis\': Trailing backslash
-categorize stop 08:32:43.796

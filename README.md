@@ -36,10 +36,10 @@ A real time application of intelligence gained from passively monitoring wireles
 
 probeprint2 runs as three stages:
 
-1. **Capture** — `build_ssid.sh` sniffs 802.11 probe requests off a monitor-mode
-   interface (via tshark) into the `probeprint` database. `pcap2db.sh` backfills
+1. **Capture** — `capture-scripts/build_ssid.sh` sniffs 802.11 probe requests off a monitor-mode
+   interface (via tshark) into the `probeprint` database. `capture-scripts/pcap2db.sh` backfills
    the same way from saved captures.
-2. **Correlate & enrich** — `process.sh` turns raw SSIDs into intel: category,
+2. **Correlate & enrich** — `analysis.sh` turns raw SSIDs into intel: category,
    name, language, rarity, coordinates, and device identity across MAC rotation.
    It is offline-first — live WiGLE lookups are a separate, opt-in step.
 3. **Heads-up display** — `display.sh` shows who is in range now, one block per
@@ -69,14 +69,20 @@ Run everything from the repo root.
 ./build_dbs.sh
 
 # 2a. live capture (interface must already be in monitor mode)
-./build_ssid.sh
+./capture-scripts/build_ssid.sh
 # 2b. or backfill from saved captures instead
-./pcap2db.sh capture1.pcap capture2.pcap
+./capture-scripts/pcap2db.sh capture1.pcap capture2.pcap
 
 # 3. enrich everything captured so far -- offline, incremental, safe to re-run
-./process.sh
+./analysis.sh
 # fetch new WiGLE locations separately, minding the daily quota
-./summarize_location.sh --new
+./analysis-scripts/online_wigle_fetch.sh --new
+# place SSIDs that name a business, for the ones WiGLE could not (see below)
+./analysis-scripts/online_places.sh --dry-run
+
+# 3b. how much of what was transmitted did we actually capture?
+#     read-only and offline, safe to run during capture
+./analysis-scripts/fidelity.sh
 
 # 4. display who is in range
 ./display.sh                     # live view (default; ^C to quit)
@@ -86,6 +92,153 @@ Run everything from the repo root.
 ```
 
 
+
+## How complete is the capture?
+
+Every pass here treats the `ssid` table as the population. It is a sample. A
+passive monitor never hears everything, and the loss is not uniform — so before
+concluding that a device was absent, it is worth knowing how much was missed.
+
+`analysis-scripts/fidelity.sh` measures that from data already collected. An 802.11
+sequence number is a per-transmitter frame counter, so the gap between two
+consecutive captured frames from one address says how many of that device's
+frames are missing from the trace. No reference capture is needed.
+
+```
+./analysis-scripts/fidelity.sh              whole collection
+./analysis-scripts/fidelity.sh --since 300  last 5 minutes
+./analysis-scripts/fidelity.sh --load       completeness against channel load
+./analysis-scripts/fidelity.sh --channels   which channels were listened to
+```
+
+Read-only, offline, safe to run during capture.
+
+### Read the number correctly
+
+It is a **lower bound**. Ingest keeps probe requests only, so a sequence gap has
+two causes that cannot be told apart: a frame the monitor missed, and a frame
+the device sent that was filtered out on purpose. An associated device browsing
+the web therefore looks far worse than an idle one.
+
+That does not spoil the main use. The sequence graph decides two addresses are
+one device partly on how large a sequence gap it will tolerate, and for that
+purpose both causes are the same event — the counter advanced unobserved. This
+measures the gap distribution `SEQGRAPH_ALPHA` and `SEQGRAPH_BETA` should be
+fitted to, per venue, instead of the current fixed defaults.
+
+What it is not is a verdict on the radio.
+
+### Channel coverage
+
+The report also lists which channels produced frames, and warns when a band is
+effectively unlistened. That matters more than any percentage: a device probing
+only on 5 GHz while the rig listens on 2.4 GHz is absent from the collection
+entirely, and no enrichment pass recovers it.
+
+Method: Schulman, Levin & Spring, *On the Fidelity of 802.11 Packet Traces*,
+PAM 2008 — <http://www.cs.umd.edu/projects/wifidelity/>. The thresholds used
+here are ours; see `analysis-scripts/fidelity_functions.sh`.
+
+## Placing SSIDs that name a business
+
+WiGLE can only place an SSID somebody drove past with a radio. Everything else
+is a name with no location attached, and on a real collection that is the large
+majority. But an SSID like `Tortillas Alizze` names a venue, and the venue is on
+the map whether or not anyone ever wardrove it.
+
+`analysis-scripts/online_places.sh` looks those names up through the **Google Places API** and
+writes the street address and coordinates.
+
+```
+./analysis-scripts/online_places.sh --dry-run   # list what would be sent -- sends nothing
+./analysis-scripts/online_places.sh 25          # query at most 25 candidates
+./analysis-scripts/online_places.sh             # query at most 200
+./analysis-scripts/online_places.sh --report    # coverage summary, no network
+```
+
+Set `GOOGLE_PLACES_KEY` in `.env` first, on a key with **Places API (New)**
+enabled. This is a different API and a different key from
+`GOOGLE_GEOLOCATION_KEY`: that one takes BSSIDs and answers "where is the
+observer", this one takes a name and answers "where is that venue". Without the
+key the pass refuses to start rather than silently doing nothing.
+
+### A Places answer is weaker evidence than a WiGLE one
+
+WiGLE reports an **observation** — a radio broadcasting this SSID was heard at
+these coordinates. Places reports where a **venue of that name is**, which only
+becomes a person's location if the SSID really is that venue's network. It is a
+good inference for `Tortillas Alizze` and a bad one for a household that named
+its router after a favorite restaurant.
+
+So the two are kept apart. Results are written with `geo_source='google_places'`;
+filter on that column wherever only observations will do:
+
+```sql
+select * from ssid_intel where geo_source = 'wigle';         -- sightings only
+select * from ssid_intel where geo_source = 'google_places';  -- inferred
+```
+
+**Only SSIDs WiGLE could not place are ever queried.** A row already carrying
+observed coordinates is skipped, so a measurement is never overwritten by a
+guess — and you never pay to make your data worse.
+
+### Matching is exact, on purpose
+
+Google's text search is fuzzy, so taking its first result would invent locations
+for real people. Both sides are normalized first — lowercased, router decoration
+stripped (`_5G`, `guest`, `wifi`, `-ext`, …), non-alphanumerics removed — and
+then compared exactly:
+
+| SSID | normalized | result |
+|---|---|---|
+| `Tortillas Alizze` | `tortillasalizze` | matches |
+| `TortillasAlizze_5G` | `tortillasalizze` | matches — same venue |
+| `Tortillas Alizze Guest` | `tortillasalizze` | matches — same venue |
+| `Tortilleria Alice` | `tortilleriaalice` | **refused** |
+
+A name shared by several distant venues — a chain — yields no coordinates at
+all, only a recorded `place_match_count`, exactly as the WiGLE path treats an
+SSID seen in several cities. Venues clustered inside about a kilometer still
+yield a fix. Names shorter than five normalized characters never cost a request.
+
+### Which SSIDs get asked about
+
+Every request costs money and sends a name to Google, so most SSIDs are
+rejected before one is spent. `--dry-run` shows the list and the tally:
+
+```
+  would query : 912
+  rejected    :
+         717 mostly digits          unit numbers, serials, phone numbers
+         634 street address         "1190 Lowell" -- an address, not a venue
+         502 too short              under five letters; matches half a city
+         232 router default         NETGEAR, Tenda, MySpectrum: a device, not a place
+           3 no vowel               'CptnC' and hex fragments cannot be looked up
+```
+
+Also skipped: SSIDs flagged `is_common`, ones `check_name` identified as
+somebody's personal or family name, and the `TECH_*` and `OTHER_ANOMALOUS`
+categories.
+
+Set `PLACES_REQUIRE_MULTIWORD=1` to additionally require a name of more than one
+word. That removes about another 45% — household nicknames tend to be single
+tokens — at the cost of dropping genuine one-word businesses. It is off by
+default because losing those defeats the point of the pass.
+
+`PLACES_CATEGORY` narrows to a single category. Note that
+`LOCATION_SPECIFIC` is **not** the venue category despite the name:
+`check_address()` assigns it on the shape `<number> <Word>`, so it holds street
+addresses, and the pass excludes it.
+
+### Cost and egress
+
+This sends SSIDs to Google and is billed per request. It is therefore capped per
+run, cached under `places/` so a name is never paid for twice, and **not part of
+`analysis.sh`** — like `summarize_location.sh`, you run it deliberately. Start
+with `--dry-run`, then a small number.
+
+Rows already asked about are never re-queried: the pass is driven by
+`place_match_count is null`, so re-running is free.
 
 ## Assumptions
 Randomized MAC does not coincide with a known Vendor OUI

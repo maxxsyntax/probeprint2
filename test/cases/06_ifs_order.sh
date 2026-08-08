@@ -16,7 +16,7 @@ snapshot () {
 # --- order A: airport before vendor before categorize --------------------
 reset_db
 (
-    source ./ssid_intel_functions.sh
+    source ./analysis-scripts/ssid_intel_functions.sh
     ssid2ssid_intel
     check_airport
     mac2vendor
@@ -28,7 +28,7 @@ vendor_a=$(sq1 "select ifnull(vendor,'-') from ssid where wlan_sa='00:1a:11:00:0
 # --- order B: categorize before vendor before airport --------------------
 reset_db
 (
-    source ./ssid_intel_functions.sh
+    source ./analysis-scripts/ssid_intel_functions.sh
     ssid2ssid_intel
     categorize
     mac2vendor
@@ -53,7 +53,7 @@ assert_contains "mac2vendor resolved a real vendor in order B" "Google" "$vendor
 # Sourcing the functions and running them must leave IFS at its default.
 before=$(printf '%q' "$IFS")
 (
-    source ./ssid_intel_functions.sh
+    source ./analysis-scripts/ssid_intel_functions.sh
     check_airport
 ) >/dev/null 2>&1
 after=$(printf '%q' "$IFS")

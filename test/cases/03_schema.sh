@@ -24,7 +24,10 @@ for t in ssid ssid_intel bursts; do
         "$(sq1 "select count(*) from information_schema.tables where table_schema='probeprint' and table_name='$t';")"
 done
 
-# --- the score column score()/bump_score() write to ----------------------
+# --- the score column, retained but no longer written --------------------
+# score()/bump_score() were deleted; the column stays so an existing collection
+# is not altered out from under it. Asserting it still exists is what keeps a
+# later cleanup from dropping it silently.
 assert_eq "ssid_intel.score column exists" "1" \
     "$(sq1 "select count(*) from information_schema.columns where table_schema='probeprint' and table_name='ssid_intel' and column_name='score';")"
 

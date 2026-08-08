@@ -10,7 +10,7 @@ cd "$REPO"
 reset_db
 mysql probeprint -e "insert ignore into ssid_intel (ssid_hex) select distinct ssid_hex from ssid;"
 
-source ./location_functions.sh
+source ./analysis-scripts/location_functions.sh
 
 # --- single city: report region + city + road ----------------------------
 summarize_one "$(hexof OneCity)" >/dev/null 2>&1
@@ -59,7 +59,7 @@ assert_not_contains "SSID with a quote does not produce a jq syntax error" "synt
 # The old summarize_location.sh computed a locale and discarded it, because both
 # its DB writes and its bottom-of-file calls were commented out.
 mysql probeprint -e "update ssid_intel set location=null;"
-./standalone_summarize_loc.sh >/tmp/sweep.log 2>&1
+./analysis-scripts/slow_summarize_loc.sh >/tmp/sweep.log 2>&1
 # Every row gets a verdict except the quota-exhausted one, which is deliberately
 # left NULL so a later run retries it rather than caching a failure as a result.
 assert_eq "bulk sweep resolves everything except the quota row" "1" \

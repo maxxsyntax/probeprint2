@@ -17,9 +17,13 @@ obvious-looking "improvements" are things the literature measured as worse.
 SSIDs, MAC addresses, device names and inferred home/work locations of
 identifiable people. Two consequences for anyone working in this repo:
 
-- **Never commit captured data.** `.env`, `locs/`, `lists/ignore.txt`,
+- **Never commit captured data.** `.env`, `locs/`, `logs/`, `lists/ignore.txt`,
   `lists/industry.txt` and `*.db` are gitignored for this reason. Do not add
   captured SSIDs to test fixtures, commit messages, or issue text.
+- **Per-pass logs are captured data too.** `analysis.sh` writes them to `logs/`
+  (mode 700, override with `PP_LOG_DIR`) rather than `/tmp`, because they carry
+  SSIDs, device MACs and derived locations, and a predictable world-readable
+  path publishes those to every account on the host.
 - **Never send collected data to a third-party service** without explicit
   authorization. WiGLE lookups send SSIDs to wigle.net; that is inherent to the
   tool, but it is still egress.
@@ -35,43 +39,53 @@ Every script resolves `.env`, `lists/` and `locs/` relatively, so `cd` into
 mkdir -p locs                # WiGLE response cache, gitignored
 
 # capture (interface must already be in monitor mode)
-./build_ssid.sh
+./capture-scripts/build_ssid.sh
 
 # backfill from saved captures instead
-./pcap2db.sh capture1.pcap capture2.pcap
+./capture-scripts/pcap2db.sh capture1.pcap capture2.pcap
 
 # enrichment: every pass, in dependency order -- the normal way to run them
-./process.sh                 # incremental; skips rows already enriched
-./process.sh --recompute     # re-derive everything
-./process.sh --list          # show the passes and stop
+./analysis.sh                 # incremental; skips rows already enriched
+./analysis.sh --recompute     # re-derive everything
+./analysis.sh --list          # show the passes and stop
 
 # or pick them off individually
-./standalone_categorize.sh
-./standalone_name.sh
-./standalone_airport.sh
-./standalone_rarity.sh
-./standalone_summarize_loc.sh
+./analysis-scripts/categorize.sh
+./analysis-scripts/name.sh
+./analysis-scripts/airport.sh
+./analysis-scripts/rarity.sh
+./analysis-scripts/slow_summarize_loc.sh
 
 # grouping
-./build_bursts.sh            # SSID sets per burst
-./standalone_seqgraph.sh     # devices, chained across MAC rotation
-./standalone_seqgraph.sh --report   # roster: alias, confidence, MACs absorbed
+./analysis-scripts/bursts.sh            # SSID sets per burst
+./analysis-scripts/seqgraph.sh     # devices, chained across MAC rotation
+./analysis-scripts/seqgraph.sh --report   # roster: alias, confidence, MACs absorbed
 
 # geolocation (post-capture; the default path is offline)
-./standalone_geolocate.sh           # coords from the locs/ WiGLE cache
-./standalone_geolocate.sh --bssids  # harvest BSSIDs from directed probes
-./standalone_geolocate.sh --addresses # reverse geocode via Nominatim (network)
+./analysis-scripts/geolocate.sh           # coords from the locs/ WiGLE cache
+./analysis-scripts/geolocate.sh --bssids  # harvest BSSIDs from directed probes
+./analysis-scripts/geolocate.sh --addresses # reverse geocode via Nominatim (network)
+
+# named venues -> street address, for SSIDs WiGLE could not place
+# (network, billed per request, deliberately not in analysis.sh)
+./analysis-scripts/online_places.sh --dry-run    # show what would be sent, send nothing
+./analysis-scripts/online_places.sh 25           # query at most 25 candidates
+./analysis-scripts/online_places.sh --report     # coverage, no network
+
+# how much of what was transmitted did we actually capture (read-only, offline)
+./analysis-scripts/fidelity.sh            # completeness, load banding, channel coverage
+./analysis-scripts/fidelity.sh --since 300
 
 # live display
 ./display.sh
 ```
 
-Only three orderings actually matter, and `process.sh` encodes them:
-`standalone_ssid2ssid_intel.sh` first, because nothing else has rows to work on;
+Only three orderings actually matter, and `analysis.sh` encodes them:
+`analysis-scripts/ssid2ssid_intel.sh` first, because nothing else has rows to work on;
 rarity before seqgraph, because `pnl_rarity` sums `ssid_intel.rarity`; geolocate
 before oneloc, because `is_oneloc` derives from `geo_match_count` and refuses
-rather than guessing without it. `process.sh` makes **no network call** —
-`summarize_location.sh --new` is the WiGLE fetch and is deliberately separate.
+rather than guessing without it. `analysis.sh` makes **no network call** —
+`analysis-scripts/online_wigle_fetch.sh --new` is the WiGLE fetch and is deliberately separate.
 
 `diagnose_legacy_rows.sh` is read-only and reports rows that look like they were
 written by the pre-2025 ingest parser (see *Ingest* below).
@@ -151,6 +165,12 @@ miss them.
 - Wildcard probes arrive from tshark as the literal string `<MISSING>` and are
   stored verbatim; downstream queries filter on it.
 - `ie_fp` is a **generated** column. Do not write to it.
+- **`ssid_intel.score` is retained but never written.** `score()`/`bump_score()`
+  were deleted; identifiability is expressed by `rarity` and `pnl_rarity`
+  instead. It is also the one column that demonstrates the `ALTER` rule above in
+  the breach — it exists only in the `CREATE`, so a collection predating it does
+  not have it at all. Harmless now that nothing reads it, but do not add a
+  column that way.
 - **`devices.id` is the only device identity.** It is an autoincrement surrogate
   key: never reused, never renumbered. `devices.alias` ("Brave Falcon") is a
   **non-key display attribute** — never join on it, never put it in a foreign
@@ -168,7 +188,7 @@ miss them.
   household SSIDs scores ~59 and is close to uniquely identifiable. Keyed on the
   device rather than the MAC, so a rotation yields one complete list instead of
   three partial ones.
-- **Run `./standalone_seqgraph.sh --validate` on any real capture before
+- **Run `./analysis-scripts/seqgraph.sh --validate` on any real capture before
   trusting the clustering.** Devices that do not randomize their MAC are ground
   truth needing no inference, so two of them in one cluster is a provable false
   merge and one split across clusters a provable false split. That gives a
@@ -199,7 +219,7 @@ tab separated. The burst passes, `mac2vendor` and `seqgraph_functions.sh` all us
 array splitting.**
 
 Rows written before this fix cannot be repaired — the discarded field is gone.
-`./diagnose_legacy_rows.sh` reports whether a collection is affected;
+`./analysis-scripts/diagnose_legacy_rows.sh` reports whether a collection is affected;
 re-importing the original captures is the only recovery.
 
 ## Query hygiene
@@ -217,37 +237,102 @@ re-importing the original captures is the only recovery.
 
 ## Layout
 
-Sourced libraries have no exec bit; anything runnable does. `start_cap.sh`
-invokes `build_ssid.sh` by absolute path, so that distinction is load-bearing.
+Three modules, matching the three in `idea.txt`: **capture**, **analysis**,
+**display**. Each has one entry point at the top level and its functions in a
+directory beside it.
+
+```
+capture.sh            not yet written -- see "Still to do" below
+analysis.sh           every enrichment pass in dependency order
+display.sh            the operator view
+build_dbs.sh          schema of record; used by all three
+
+capture-scripts/      the parse-and-insert path, plus the Pi deployment glue
+analysis-scripts/     enrichment passes and the libraries they share
+display-scripts/      the operator view's queries
+```
+
+**Run everything from the repo root.** `lists/`, `locs/`, `logs/` and `.env`
+resolve relative to the working directory, not to the script, so
+`./analysis-scripts/categorize.sh` works and `cd analysis-scripts && ./categorize.sh`
+does not.
+
+Sourced libraries have no exec bit; anything runnable does.
+`capture-scripts/pi/start_cap.sh` invokes `build_ssid.sh` by absolute path, so
+that distinction is load-bearing.
+
+### Pass naming
+
+Every pass is runnable on its own *and* from `analysis.sh` — that dual use is
+why `standalone_` was a redundant prefix and is gone. What the name carries now
+is the two things worth knowing before running one:
+
+| Prefix | Meaning |
+|---|---|
+| `online_` | **makes network calls.** Sends data to a third party, and in the Places case is billed per request. Never runs from `analysis.sh`. |
+| `slow_` | takes long enough on a real collection to matter when you are standing in a room |
+| neither | offline and quick |
+
+`geolocate.sh` has no prefix deliberately: it reads the cached WiGLE responses
+in `locs/` and makes no network call. `online_wigle_fetch.sh` is what fills that
+cache.
+
+### capture-scripts/
 
 | File | Role |
 |---|---|
 | `ingest_functions.sh` | `PROBE_TSHARK_ARGS`, `ingest_stream` — the parse + insert loop |
+| `build_ssid.sh` | Live capture off a monitor-mode interface |
+| `pcap2db.sh` | Backfill the same rows from saved captures |
+| `pi/` | Sensor deployment glue: `script.sh`, `start_cap.sh`, `start_ad.sh`. Hardcoded `/home/pi` paths, driven by cron and screen on the Pi, not called by anything here. |
+
+### analysis-scripts/
+
+Shared libraries:
+
+| File | Role |
+|---|---|
+| `ssid_intel_functions.sh` | **The monolith.** `categorize`, `check_name`, `check_airport`, `check_common`, `check_fqdn`, `check_address`, `check_language`, `check_anomalies`, `make_ignore_list`. Still to be split — see below. |
 | `location_functions.sh` | `wigle_fetch`, `summarize_one` — WiGLE fetch and jq summarization |
-| `vendor_functions.sh` | `mac2vendor` — OUI → vendor |
-| `rarity_functions.sh` | `load_ssid_frequencies`, `score_rarity` — continuous SSID rarity |
+| `geolocate_functions.sh` | `geo_cache_index`, `geo_from_wigle_cache`, `derive_is_oneloc`, `geo_harvest_bssids`, `geo_reverse_addresses`, `geo_google_observer`, `geo_apple_bssid` |
+| `places_functions.sh` | `places_resolve` — SSIDs naming a business, via Google Places |
+| `fidelity_functions.sh` | `fidelity_completeness`, `fidelity_by_load`, `fidelity_channels` — how much of what was transmitted got captured. Read-only |
 | `seqgraph_functions.sh` | `seqgraph_assign`, `assign_aliases` — device identity across MAC rotation |
-| `display_functions.sh` | `rssi_range`, `device_profile_rows`, `display_inrange` — the operator view |
 | `bursts_functions.sh` | Burst grouping by MAC / sequence / VHT |
-| `geolocate_functions.sh` | `geo_from_wigle_cache`, `derive_is_oneloc`, `geo_harvest_bssids`, `geo_reverse_addresses`, `geo_google_observer`, `geo_apple_bssid` — coordinates, and the provider reasoning below |
-| `language_functions.sh` | `check_language_words` — language from vocabulary, for the Latin-script SSIDs `check_language`'s byte-range test cannot see |
-| `recategorize_functions.sh` | `recategorize_unknown`, `enumerate_cpe_region` — second pass over `OTHER_UNKNOWN` only |
-| `industry_functions.sh` | `check_industry` — the engagement-specific `INDUSTRY_*` keyword lists |
-| `ssid_intel_functions.sh` | The remaining enrichment passes; sourced by `build_ssid_intel.sh` |
-| `standalone_*.sh` | One concern each, runnable directly |
-| `process.sh` | Runs every enrichment pass in dependency order; the normal entry point |
-| `summarize_location.sh` | The live WiGLE fetch path, kept out of `process.sh` because it is rate limited |
-| `client/` | Distributed Pi capture nodes writing to a central database |
+| `rarity_functions.sh` | `load_ssid_frequencies`, `score_rarity` |
+| `vendor_functions.sh` | `mac2vendor` — OUI → vendor |
+| `language_functions.sh` | `check_language_words` — language from vocabulary |
+| `recategorize_functions.sh` | `recategorize_unknown`, `enumerate_cpe_region` |
+| `industry_functions.sh` | `check_industry` — engagement-specific `INDUSTRY_*` lists |
 
-**Two generations still coexist** for the enrichment passes:
-`ssid_intel_functions.sh` and the `standalone_*.sh` set. A fix to a pass usually
-needs applying to **both**. The `categories` keyword tables in
-`ssid_intel_functions.sh` and `standalone_categorize.sh` are duplicated verbatim
-— edit both, or they drift. They have drifted before: one wrote
-`category='LOCATION'` while the other wrote `'LOCATION_VAGUE'`.
+Passes, in the order `analysis.sh` runs them: `ssid2ssid_intel`, `categorize`,
+`recategorize`, `slow_language`, `name`, `airport`, `address`, `fqdn`,
+`industry`, `mac2vendor`, `rarity`, `slow_summarize_loc`, `geolocate`, `oneloc`,
+`seqgraph`.
 
-`display_functions.sh` was ported from sqlite3 to MariaDB and `display.sh` now
-sources it rather than carrying inline copies of the same queries.
+Outside that batch: `common`, `make_ignore`, `bursts`, `ssid_intel`,
+`fidelity`, `diagnose_legacy_rows`, and the four `online_*` passes
+(`online_wigle_fetch`, `online_places`, `online_gps2city`,
+`online_slow_wigle_grind`).
+
+### display-scripts/
+
+| File | Role |
+|---|---|
+| `display_functions.sh` | `rssi_range`, `device_profile_rows`, `display_inrange`, `display_ungrouped` |
+
+### Still to do
+
+- **`capture.sh` does not exist.** Capture is still started by calling
+  `capture-scripts/build_ssid.sh` or `pcap2db.sh` directly. The other two
+  modules have their entry point; this one does not yet.
+- **`ssid_intel_functions.sh` is still monolithic.** Roughly a dozen unrelated
+  enrichment passes in one file, which `idea.txt` asks to be split per concern.
+  Its `categories` keyword table is also duplicated verbatim in
+  `analysis-scripts/categorize.sh` — edit both or they drift. They have drifted
+  before: one wrote `category='LOCATION'` while the other wrote
+  `'LOCATION_VAGUE'`. Splitting the file is the natural moment to collapse that
+  duplication.
 
 ## External services
 
@@ -272,8 +357,6 @@ sources it rather than carrying inline copies of the same queries.
   `[ -n $ignore_check ]` tests and a `${ssids[$ssdi]}` typo.
 - `check_name` matches names as substrings anywhere in an SSID, producing heavy
   false positives on short names.
-- `check_oneloc` greps `'lts": 1,'` — the tail of `"totalResults": 1,`. Works,
-  but fragile.
 - IE 3 empty-frame exclusion (see FINGERPRINTING.md) is not implemented.
 
 Comments in these files that read like bug reports (`#bug here …`, `#borken`)
@@ -287,7 +370,8 @@ are now stale.
 | Provider | Input | Answers | Status |
 |---|---|---|---|
 | **WiGLE** | SSID **or** BSSID | where that AP is | in use; `locs/` cache is read offline |
-| **Google** | a *set* of BSSIDs | where the **observer** is | needs `GOOGLE_GEOLOCATION_KEY`, ≥2 BSSIDs |
+| **Google Geolocation** | a *set* of BSSIDs | where the **observer** is | needs `GOOGLE_GEOLOCATION_KEY`, ≥2 BSSIDs |
+| **Google Places** | a venue **name** | where that venue is | needs `GOOGLE_PLACES_KEY`; billed per request |
 | **Apple** | one BSSID | that AP's position | **no public API** — ships disabled |
 | **Nominatim** | lat/lon | street address | free, 1 req/sec, needs a real User-Agent |
 
@@ -301,11 +385,21 @@ Two consequences that catch people out:
   it answers "where am I". It cannot tell you where one SSID is. For per-AP
   position the options are WiGLE, or Apple's undocumented endpoint.
 
+- **Google Places is an inference, not a sighting.** WiGLE reports that a radio
+  with this SSID was heard at a coordinate. Places reports where a *venue* of
+  that name is, which only becomes the device's location if the SSID really is
+  that venue's network. `online_places.sh` therefore queries only SSIDs
+  WiGLE could not place, requires the name to match exactly once router
+  decoration is stripped, and writes `geo_source='google_places'` so the two can
+  always be told apart. Filter on `geo_source` wherever only observations will
+  do. It is billed per request and sends SSIDs to Google, so it is capped per
+  run, cached in `places/`, and excluded from `analysis.sh`.
+
 Apple is stubbed rather than implemented on purpose: there is no public API, the
 endpoint returns position data on hundreds of unrelated third-party APs per
 query (Rye & Levin, 2024), and enabling it is an engagement-owner decision.
 
-**Enrichment is post-capture.** `standalone_geolocate.sh` with no arguments is
+**Enrichment is post-capture.** `geolocate.sh` with no arguments is
 strictly offline — it reads the `locs/` cache and makes no network call, which
 is what makes it safe to run anywhere. Network providers are opt-in flags. To
 run the offline pass during capture, set `geo_online=1` in `.env`; it is off by

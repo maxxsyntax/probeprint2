@@ -1,0 +1,17 @@
+{
+  "success": true,
+  "totalResults": 1,
+  "resultCount": 1,
+  "results": [
+    {
+      "trilat": 52.51627400,
+      "trilong": 13.37770200,
+      "ssid": "solocase",
+      "qos": 6,
+      "country": "DE",
+      "region": "Berlin",
+      "city": "Berlin",
+      "road": "Platz des 18. Maerz"
+    }
+  ]
+}

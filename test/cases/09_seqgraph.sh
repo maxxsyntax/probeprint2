@@ -8,7 +8,7 @@ source "${REPO:-/opt/probeprint2}/test/lib.sh"
 cd "$REPO"
 
 reset_db
-./standalone_seqgraph.sh >/tmp/seqgraph.log 2>&1
+./analysis-scripts/seqgraph.sh >/tmp/seqgraph.log 2>&1
 
 # --- the headline result: three MACs resolved to one device --------------
 dev=$(sq1 "select device_id from ssid where ssid_hex=lower(hex('RoamHome')) and wlan_sa='12:00:00:00:00:01';")
@@ -54,14 +54,14 @@ assert_eq "the post-wrap frame joined the same device" "$wrap" \
 assert_contains "run reports how many randomizations were defeated" \
     "randomization defeated on" "$(cat /tmp/seqgraph.log)"
 
-report=$(./standalone_seqgraph.sh --report 2>&1)
+report=$(./analysis-scripts/seqgraph.sh --report 2>&1)
 # Not "first": the report sorts by pnl_rarity before mac_count, and several
 # fixtures tie at 3 MACs, so position is not stable. Presence is what matters.
 assert_contains "report lists the multi-MAC device" "$dev" "$report"
 
 # --- incremental and idempotent ------------------------------------------
 before=$(sq "select time,device_id from ssid order by time;" | md5sum)
-./standalone_seqgraph.sh >/dev/null 2>&1
+./analysis-scripts/seqgraph.sh >/dev/null 2>&1
 after=$(sq "select time,device_id from ssid order by time;" | md5sum)
 
 # --- identity is stable across incremental runs ---------------------------
@@ -72,7 +72,7 @@ before_ids=$(sq "select id, device_key from devices order by id;")
 mysql probeprint -e "insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht) values
   (lower(hex('LateArrival')),'11:00:00:00:00:01','1700099000.000000','-50',2437,3000,'0x1'),
   (lower(hex('LateArrival')),'11:00:00:00:00:01','1700099000.100000','-50',2437,3001,'0x1');"
-./standalone_seqgraph.sh >/tmp/seq_inc.log 2>&1
+./analysis-scripts/seqgraph.sh >/tmp/seq_inc.log 2>&1
 
 late=$(sq1 "select distinct device_id from ssid where ssid_hex=lower(hex('LateArrival'));")
 assert_eq "a late-arriving device gets its own id, not a reused one" "1" \
@@ -90,7 +90,7 @@ assert_eq "existing device ids are unchanged by the new run" \
 # reproduce exactly the same keys.
 keys_before=$(sq "select device_key from devices order by device_key;" | md5sum)
 mysql probeprint -e "update ssid set device_id=null;"
-./standalone_seqgraph.sh --recompute >/dev/null 2>&1
+./analysis-scripts/seqgraph.sh --recompute >/dev/null 2>&1
 assert_eq "recompute reproduces identical device keys" \
     "$keys_before" "$(sq "select device_key from devices order by device_key;" | md5sum)"
 
@@ -106,7 +106,7 @@ assert_eq "alias looks like Adjective Noun" "1" \
 # recompute must not rename anything.
 alias_before=$(sq1 "select alias from devices where id = $dev;")
 mysql probeprint -e "update ssid set device_id=null;"
-./standalone_seqgraph.sh --recompute >/dev/null 2>&1
+./analysis-scripts/seqgraph.sh --recompute >/dev/null 2>&1
 assert_eq "recompute does not rename a device" \
     "$alias_before" "$(sq1 "select alias from devices where id = $dev;")"
 
@@ -125,7 +125,7 @@ mysql probeprint -e "update ssid set ie_order='0,1,45' , extcap='0xff'
                       where device_id = $dev limit 1;"
 mysql probeprint -e "update ssid set ie_order='0,1,45,127' , extcap='0x01'
                       where device_id = $dev and ie_order is null limit 1;"
-source ./seqgraph_functions.sh
+source ./analysis-scripts/seqgraph_functions.sh
 seqgraph_refresh_stats
 assert_eq "mixed IE signatures downgrade confidence to low" "low" \
     "$(sq1 "select confidence from devices where id = $dev;")"
@@ -142,7 +142,7 @@ assert_eq "re-running assigns nothing new" "$before" "$after"
 # would correctly split off on its own, giving four devices for a reason that
 # has nothing to do with alpha.
 mysql probeprint -e "update ssid set device_id=null;"
-SEQGRAPH_ALPHA=10 SEQGRAPH_GATE_IE=0 ./standalone_seqgraph.sh --recompute >/dev/null 2>&1
+SEQGRAPH_ALPHA=10 SEQGRAPH_GATE_IE=0 ./analysis-scripts/seqgraph.sh --recompute >/dev/null 2>&1
 assert_eq "a 10s alpha splits the chain back into 3 devices" "3" \
     "$(sq1 "select count(distinct device_id) from ssid where wlan_sa in ('12:00:00:00:00:01','36:00:00:00:00:02','5a:00:00:00:00:03');")"
 

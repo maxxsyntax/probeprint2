@@ -6,7 +6,7 @@ cd "$REPO"
 reset_db
 
 # --- clean data: nothing should be flagged -------------------------------
-out=$(./diagnose_legacy_rows.sh 2>&1)
+out=$(./analysis-scripts/diagnose_legacy_rows.sh 2>&1)
 assert_contains "clean fixture data reports no shifted rows" \
     "No evidence of shifted rows" "$out"
 
@@ -23,7 +23,7 @@ SQL
 before_rows=$(sq1 "select count(*) from ssid;")
 before_hash=$(sq "select concat_ws('|',ssid_hex,wlan_sa,time,ifnull(rssi,''),ifnull(freq,''),ifnull(seq,''),ifnull(vht,'')) from ssid order by time;" | md5sum)
 
-out=$(./diagnose_legacy_rows.sh 2>&1)
+out=$(./analysis-scripts/diagnose_legacy_rows.sh 2>&1)
 
 assert_contains "detects an epoch value sitting in rssi" \
     "rssi holds an epoch timestamp" "$out"

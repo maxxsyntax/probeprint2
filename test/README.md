@@ -35,6 +35,9 @@ If the daemon is not running: `sudo systemctl start docker`.
 | `13_recategorize` | Second-pass categorization of OTHER_UNKNOWN: operator brands, router name shapes, workplace and residence markers, and vendors never implying a location |
 | `14_language` | Language from vocabulary for Latin-script SSIDs: single-language vs family scope, whole-token matching, conflicting markers refused |
 | `15_inrange` | The in-range operator display: one profile per device assembled from its PNL, low-confidence merges flagged before the profile, char(31) separator safe against pipes in SSIDs |
+| `16_oneloc` | `is_oneloc` derived from `geo_match_count` rather than WiGLE's case-insensitive `totalResults`, wrong in both directions; refusal when geolocation has not run; unscored rows undetermined rather than false |
+| `17_places` | Google Places name lookup: exact match after normalizing router decoration, near-miss names refused, chain names left unplaced, SSIDs WiGLE already placed never queried, refusal without a key, `--dry-run` sends nothing |
+| `18_fidelity` | Capture completeness from sequence numbers: known-hole fixtures, 12-bit counter wrap, retransmissions excluded, idle gaps and delta-too-large reported separately, channel-coverage warning, and that the pass writes nothing |
 
 ## Rules
 

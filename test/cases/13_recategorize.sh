@@ -6,7 +6,7 @@ cd "$REPO"
 
 reset_db
 mysql probeprint -e "insert ignore into ssid_intel (ssid_hex) select distinct ssid_hex from ssid;"
-./standalone_categorize.sh    >/dev/null 2>&1
+./analysis-scripts/categorize.sh    >/dev/null 2>&1
 
 # Everything below starts life as OTHER_UNKNOWN -- if categorize() already
 # placed one of these, the test would be proving nothing.
@@ -15,7 +15,7 @@ for n in 'Bbox-7A21' 'Brightwood-3F17' 'Jacaranda-5G' 'LEDnet00040486FF' 'La Mai
         "$(sq1 "select category from ssid_intel where ssid_hex=lower(hex('$n'));")"
 done
 
-./standalone_recategorize.sh >/tmp/recat.log 2>&1
+./analysis-scripts/recategorize.sh >/tmp/recat.log 2>&1
 
 # --- operator brands from lists/cpe_isp.txt -------------------------------
 assert_eq "Bbox is recognized as CPE" "TECH_CPE" \
@@ -80,7 +80,7 @@ assert_eq "and a phone match is untouched" "TECH_PHONE" \
 
 # --- idempotent -----------------------------------------------------------
 before=$(sq "select ssid_hex,category,ifnull(cpe_isp,'') from ssid_intel order by ssid_hex;" | md5sum)
-./standalone_recategorize.sh >/dev/null 2>&1
+./analysis-scripts/recategorize.sh >/dev/null 2>&1
 assert_eq "re-running changes nothing" "$before" \
     "$(sq "select ssid_hex,category,ifnull(cpe_isp,'') from ssid_intel order by ssid_hex;" | md5sum)"
 
@@ -92,7 +92,7 @@ assert_contains "and how many from shape alone" \
 assert_contains "and how many it refused to place" \
     "still OTHER_UNKNOWN" "$(cat /tmp/recat.log)"
 
-rep=$(./standalone_recategorize.sh --regions 2>&1)
+rep=$(./analysis-scripts/recategorize.sh --regions 2>&1)
 assert_contains "the region report separates single markets" \
     "residential origin, by operator market" "$rep"
 assert_contains "and keeps vendors out of that section" \

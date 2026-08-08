@@ -5,22 +5,22 @@ source "${REPO:-/opt/probeprint2}/test/lib.sh"
 cd "$REPO"
 
 reset_db
-./standalone_seqgraph.sh >/dev/null 2>&1
+./analysis-scripts/seqgraph.sh >/dev/null 2>&1
 mysql probeprint -e "insert ignore into ssid_intel (ssid_hex) select distinct ssid_hex from ssid;"
-./standalone_rarity.sh   >/dev/null 2>&1
+./analysis-scripts/rarity.sh   >/dev/null 2>&1
 
 # --- no sqlite left anywhere in the display path -------------------------
 # Comments may legitimately mention sqlite3 (the header explains the port), so
 # only non-comment lines count as a call.
 assert_eq "display_functions.sh makes no sqlite3 calls" "0" \
-    "$(grep -v '^[[:space:]]*#' display_functions.sh | grep -c 'sqlite3')"
+    "$(grep -v '^[[:space:]]*#' display-scripts/display_functions.sh | grep -c 'sqlite3')"
 assert_eq "display.sh makes no sqlite3 calls" "0" \
     "$(grep -v '^[[:space:]]*#' display.sh | grep -c 'sqlite3')"
 assert_eq "display_functions.sh queries mariadb" "1" \
-    "$(grep -qE '^dq \(\) \{ mysql' display_functions.sh && echo 1 || echo 0)"
+    "$(grep -qE '^dq \(\) \{ mysql' display-scripts/display_functions.sh && echo 1 || echo 0)"
 
 # --- the helpers actually run --------------------------------------------
-source ./display_functions.sh
+source ./display-scripts/display_functions.sh
 
 assert_eq "rssi_range buckets a near signal"   "near by"      "$(rssi_range -50)"
 assert_eq "rssi_range buckets a mid signal"    "medium range" "$(rssi_range -70)"
@@ -40,7 +40,7 @@ assert_contains "banner flags the defeated randomization" "randomization defeate
 
 # A low-confidence device must be called out, not presented as fact.
 mysql probeprint -e "update ssid set ie_order='0,1,45', extcap='0xff' where device_id = $dev limit 1;"
-source ./seqgraph_functions.sh; seqgraph_refresh_stats
+source ./analysis-scripts/seqgraph_functions.sh; seqgraph_refresh_stats
 assert_contains "banner warns when a merge is unreliable" \
     "low confidence" "$(device_banner "$dev")"
 

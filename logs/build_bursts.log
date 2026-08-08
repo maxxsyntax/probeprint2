@@ -1,0 +1,89 @@
++ source ./bursts_functions.sh
+++ BURST_WINDOW=1.0
+++ BURST_SEQ_SPAN=60
++ ssid_2bursts-wlan_sa
++ mkdir -p logs
++ _bursts_run ssid_2bursts-wlan_sa $'select concat_ws(\'|\', time, wlan_sa, ssid_hex, ifnull(seq,0))\n\t     from ssid\n\t    where is_processed=0 and wlan_sa is not null and time != \'\'\n\t    order by cast(time as decimal(20,7));' wlan_sa 1 exact
++ local label=ssid_2bursts-wlan_sa $'sql=select concat_ws(\'|\', time, wlan_sa, ssid_hex, ifnull(seq,0))\n\t     from ssid\n\t    where is_processed=0 and wlan_sa is not null and time != \'\'\n\t    order by cast(time as decimal(20,7));' method=wlan_sa nomatch=1 mode=exact
+++ date +%H:%M:%S.%3N
++ echo 'ssid_2bursts-wlan_sa start 17:50:46.184'
+ssid_2bursts-wlan_sa start 17:50:46.184
++ local sqlfile
+++ mktemp
++ sqlfile=/tmp/tmp.xhF7YJc4P2
++ mysql -N probeprint
++ _bursts_group wlan_sa 1 exact
++ LC_ALL=C
++ awk -v METHOD=wlan_sa -v NOMATCH=1 -v MODE=exact -v WINDOW=1.0 -v SEQSPAN=60 $'\n\tBEGIN { FS = "|"; n = 0; nb = 0; nm = 0; nl = 0 }\n\t{\n\t\tts[n]   = $1        # original string: `time` is a varchar primary key,\n\t\tt[n]    = $1 + 0    # so the update must use it verbatim\n\t\tkey[n]  = $2\n\t\tssid[n] = $3\n\t\tsq[n]   = $4 + 0\n\t\tn++\n\t}\n\tEND {\n\t\tfor (i = 0; i < n; i++) {\n\t\t\tif (used[i]) continue\n\t\t\tcnt = 0\n\t\t\tmembers[cnt++] = i\n\t\t\tlast = i\n\t\t\tfor (j = i + 1; j < n; j++) {\n\t\t\t\tif (t[j] - t[i] > WINDOW) break     # time-ordered: no later j qualifies\n\t\t\t\tif (used[j]) continue\n\t\t\t\tif (MODE == "seq") {\n\t\t\t\t\tif (sq[j] < sq[i] || sq[j] > sq[i] + SEQSPAN) continue\n\t\t\t\t} else {\n\t\t\t\t\tif (key[j] != key[i]) continue\n\t\t\t\t}\n\t\t\t\tmembers[cnt++] = j\n\t\t\t\tused[j] = 1\n\t\t\t\tlast = j\n\t\t\t}\n\t\t\tused[i] = 1\n\n\t\t\tif (cnt > 1) {\n\t\t\t\ts = ssid[members[0]]\n\t\t\t\tfor (m = 1; m < cnt; m++) s = s ":" ssid[members[m]]\n\t\t\t\tburst_ssids[nb] = s\n\t\t\t\tburst_time[nb]  = ts[i]\n\t\t\t\tburst_size[nb]  = cnt\n\t\t\t\tburst_dur[nb]   = t[last] - t[i]\n\t\t\t\tnb++\n\t\t\t\tfor (m = 0; m < cnt; m++) matched[nm++] = ts[members[m]]\n\t\t\t} else {\n\t\t\t\tlone[nl++] = ts[i]\n\t\t\t}\n\t\t}\n\n\t\t# Batched output. Chunked so no single statement grows unbounded on a\n\t\t# large collection.\n\t\tfor (b = 0; b < nb; b += 500) {\n\t\t\tprintf "insert ignore into bursts (ssids,time,burst_size,burst_duration,bmethod) values "\n\t\t\tfor (k = b; k < b + 500 && k < nb; k++) {\n\t\t\t\tif (k > b) printf ","\n\t\t\t\tprintf "(\\"%s\\",\\"%s\\",%d,%.7f,\\"%s\\")",\n\t\t\t\t       burst_ssids[k], burst_time[k], burst_size[k], burst_dur[k], METHOD\n\t\t\t}\n\t\t\tprintf ";\\n"\n\t\t}\n\t\tfor (b = 0; b < nm; b += 1000) {\n\t\t\tprintf "update ssid set is_processed=100 where time in ("\n\t\t\tfor (k = b; k < b + 1000 && k < nm; k++) {\n\t\t\t\tif (k > b) printf ","\n\t\t\t\tprintf "\\"%s\\"", matched[k]\n\t\t\t}\n\t\t\tprintf ");\\n"\n\t\t}\n\t\tfor (b = 0; b < nl; b += 1000) {\n\t\t\tprintf "update ssid set is_processed=%s where time in (", NOMATCH\n\t\t\tfor (k = b; k < b + 1000 && k < nl; k++) {\n\t\t\t\tif (k > b) printf ","\n\t\t\t\tprintf "\\"%s\\"", lone[k]\n\t\t\t}\n\t\t\tprintf ");\\n"\n\t\t}\n\t\tprintf "-- bursts:%d grouped:%d lone:%d\\n", nb, nm, nl\n\t}'
++ grep '^-- bursts:' /tmp/tmp.xhF7YJc4P2
++ sed 's/^-- /  /'
+  bursts:69155 grouped:212402 lone:71641
++ mysql probeprint
++ rm -f /tmp/tmp.xhF7YJc4P2
+++ date +%H:%M:%S.%3N
++ echo 'ssid_2bursts-wlan_sa stop 17:50:51.873'
+ssid_2bursts-wlan_sa stop 17:50:51.873
++ ssid2bursts-seq
++ _bursts_run ssid_2bursts-seq $'select concat_ws(\'|\', time, wlan_sa, ssid_hex, seq)\n\t     from ssid\n\t    where is_processed=1 and seq is not null and time != \'\'\n\t    order by cast(time as decimal(20,7));' seq 2 seq
++ local label=ssid_2bursts-seq $'sql=select concat_ws(\'|\', time, wlan_sa, ssid_hex, seq)\n\t     from ssid\n\t    where is_processed=1 and seq is not null and time != \'\'\n\t    order by cast(time as decimal(20,7));' method=seq nomatch=2 mode=seq
+++ date +%H:%M:%S.%3N
++ echo 'ssid_2bursts-seq start 17:50:51.876'
+ssid_2bursts-seq start 17:50:51.876
++ local sqlfile
+++ mktemp
++ sqlfile=/tmp/tmp.VPd0jAm63K
++ _bursts_group seq 2 seq
++ mysql -N probeprint
++ LC_ALL=C
++ awk -v METHOD=seq -v NOMATCH=2 -v MODE=seq -v WINDOW=1.0 -v SEQSPAN=60 $'\n\tBEGIN { FS = "|"; n = 0; nb = 0; nm = 0; nl = 0 }\n\t{\n\t\tts[n]   = $1        # original string: `time` is a varchar primary key,\n\t\tt[n]    = $1 + 0    # so the update must use it verbatim\n\t\tkey[n]  = $2\n\t\tssid[n] = $3\n\t\tsq[n]   = $4 + 0\n\t\tn++\n\t}\n\tEND {\n\t\tfor (i = 0; i < n; i++) {\n\t\t\tif (used[i]) continue\n\t\t\tcnt = 0\n\t\t\tmembers[cnt++] = i\n\t\t\tlast = i\n\t\t\tfor (j = i + 1; j < n; j++) {\n\t\t\t\tif (t[j] - t[i] > WINDOW) break     # time-ordered: no later j qualifies\n\t\t\t\tif (used[j]) continue\n\t\t\t\tif (MODE == "seq") {\n\t\t\t\t\tif (sq[j] < sq[i] || sq[j] > sq[i] + SEQSPAN) continue\n\t\t\t\t} else {\n\t\t\t\t\tif (key[j] != key[i]) continue\n\t\t\t\t}\n\t\t\t\tmembers[cnt++] = j\n\t\t\t\tused[j] = 1\n\t\t\t\tlast = j\n\t\t\t}\n\t\t\tused[i] = 1\n\n\t\t\tif (cnt > 1) {\n\t\t\t\ts = ssid[members[0]]\n\t\t\t\tfor (m = 1; m < cnt; m++) s = s ":" ssid[members[m]]\n\t\t\t\tburst_ssids[nb] = s\n\t\t\t\tburst_time[nb]  = ts[i]\n\t\t\t\tburst_size[nb]  = cnt\n\t\t\t\tburst_dur[nb]   = t[last] - t[i]\n\t\t\t\tnb++\n\t\t\t\tfor (m = 0; m < cnt; m++) matched[nm++] = ts[members[m]]\n\t\t\t} else {\n\t\t\t\tlone[nl++] = ts[i]\n\t\t\t}\n\t\t}\n\n\t\t# Batched output. Chunked so no single statement grows unbounded on a\n\t\t# large collection.\n\t\tfor (b = 0; b < nb; b += 500) {\n\t\t\tprintf "insert ignore into bursts (ssids,time,burst_size,burst_duration,bmethod) values "\n\t\t\tfor (k = b; k < b + 500 && k < nb; k++) {\n\t\t\t\tif (k > b) printf ","\n\t\t\t\tprintf "(\\"%s\\",\\"%s\\",%d,%.7f,\\"%s\\")",\n\t\t\t\t       burst_ssids[k], burst_time[k], burst_size[k], burst_dur[k], METHOD\n\t\t\t}\n\t\t\tprintf ";\\n"\n\t\t}\n\t\tfor (b = 0; b < nm; b += 1000) {\n\t\t\tprintf "update ssid set is_processed=100 where time in ("\n\t\t\tfor (k = b; k < b + 1000 && k < nm; k++) {\n\t\t\t\tif (k > b) printf ","\n\t\t\t\tprintf "\\"%s\\"", matched[k]\n\t\t\t}\n\t\t\tprintf ");\\n"\n\t\t}\n\t\tfor (b = 0; b < nl; b += 1000) {\n\t\t\tprintf "update ssid set is_processed=%s where time in (", NOMATCH\n\t\t\tfor (k = b; k < b + 1000 && k < nl; k++) {\n\t\t\t\tif (k > b) printf ","\n\t\t\t\tprintf "\\"%s\\"", lone[k]\n\t\t\t}\n\t\t\tprintf ");\\n"\n\t\t}\n\t\tprintf "-- bursts:%d grouped:%d lone:%d\\n", nb, nm, nl\n\t}'
++ sed 's/^-- /  /'
++ grep '^-- bursts:' /tmp/tmp.VPd0jAm63K
+  bursts:2273 grouped:4896 lone:66745
++ mysql probeprint
++ rm -f /tmp/tmp.VPd0jAm63K
+++ date +%H:%M:%S.%3N
++ echo 'ssid_2bursts-seq stop 17:50:53.155'
+ssid_2bursts-seq stop 17:50:53.155
++ ssid2bursts-vht
++ _bursts_run ssid_2bursts-vht $'select concat_ws(\'|\', time, vht, ssid_hex, ifnull(seq,0))\n\t     from ssid\n\t    where is_processed=2 and vht is not null and vht != \'\' and time != \'\'\n\t    order by cast(time as decimal(20,7));' vht 3 exact
++ local label=ssid_2bursts-vht $'sql=select concat_ws(\'|\', time, vht, ssid_hex, ifnull(seq,0))\n\t     from ssid\n\t    where is_processed=2 and vht is not null and vht != \'\' and time != \'\'\n\t    order by cast(time as decimal(20,7));' method=vht nomatch=3 mode=exact
+++ date +%H:%M:%S.%3N
++ echo 'ssid_2bursts-vht start 17:50:53.157'
+ssid_2bursts-vht start 17:50:53.157
++ local sqlfile
+++ mktemp
++ sqlfile=/tmp/tmp.G1CKkw0gaj
++ mysql -N probeprint
++ _bursts_group vht 3 exact
++ LC_ALL=C
++ awk -v METHOD=vht -v NOMATCH=3 -v MODE=exact -v WINDOW=1.0 -v SEQSPAN=60 $'\n\tBEGIN { FS = "|"; n = 0; nb = 0; nm = 0; nl = 0 }\n\t{\n\t\tts[n]   = $1        # original string: `time` is a varchar primary key,\n\t\tt[n]    = $1 + 0    # so the update must use it verbatim\n\t\tkey[n]  = $2\n\t\tssid[n] = $3\n\t\tsq[n]   = $4 + 0\n\t\tn++\n\t}\n\tEND {\n\t\tfor (i = 0; i < n; i++) {\n\t\t\tif (used[i]) continue\n\t\t\tcnt = 0\n\t\t\tmembers[cnt++] = i\n\t\t\tlast = i\n\t\t\tfor (j = i + 1; j < n; j++) {\n\t\t\t\tif (t[j] - t[i] > WINDOW) break     # time-ordered: no later j qualifies\n\t\t\t\tif (used[j]) continue\n\t\t\t\tif (MODE == "seq") {\n\t\t\t\t\tif (sq[j] < sq[i] || sq[j] > sq[i] + SEQSPAN) continue\n\t\t\t\t} else {\n\t\t\t\t\tif (key[j] != key[i]) continue\n\t\t\t\t}\n\t\t\t\tmembers[cnt++] = j\n\t\t\t\tused[j] = 1\n\t\t\t\tlast = j\n\t\t\t}\n\t\t\tused[i] = 1\n\n\t\t\tif (cnt > 1) {\n\t\t\t\ts = ssid[members[0]]\n\t\t\t\tfor (m = 1; m < cnt; m++) s = s ":" ssid[members[m]]\n\t\t\t\tburst_ssids[nb] = s\n\t\t\t\tburst_time[nb]  = ts[i]\n\t\t\t\tburst_size[nb]  = cnt\n\t\t\t\tburst_dur[nb]   = t[last] - t[i]\n\t\t\t\tnb++\n\t\t\t\tfor (m = 0; m < cnt; m++) matched[nm++] = ts[members[m]]\n\t\t\t} else {\n\t\t\t\tlone[nl++] = ts[i]\n\t\t\t}\n\t\t}\n\n\t\t# Batched output. Chunked so no single statement grows unbounded on a\n\t\t# large collection.\n\t\tfor (b = 0; b < nb; b += 500) {\n\t\t\tprintf "insert ignore into bursts (ssids,time,burst_size,burst_duration,bmethod) values "\n\t\t\tfor (k = b; k < b + 500 && k < nb; k++) {\n\t\t\t\tif (k > b) printf ","\n\t\t\t\tprintf "(\\"%s\\",\\"%s\\",%d,%.7f,\\"%s\\")",\n\t\t\t\t       burst_ssids[k], burst_time[k], burst_size[k], burst_dur[k], METHOD\n\t\t\t}\n\t\t\tprintf ";\\n"\n\t\t}\n\t\tfor (b = 0; b < nm; b += 1000) {\n\t\t\tprintf "update ssid set is_processed=100 where time in ("\n\t\t\tfor (k = b; k < b + 1000 && k < nm; k++) {\n\t\t\t\tif (k > b) printf ","\n\t\t\t\tprintf "\\"%s\\"", matched[k]\n\t\t\t}\n\t\t\tprintf ");\\n"\n\t\t}\n\t\tfor (b = 0; b < nl; b += 1000) {\n\t\t\tprintf "update ssid set is_processed=%s where time in (", NOMATCH\n\t\t\tfor (k = b; k < b + 1000 && k < nl; k++) {\n\t\t\t\tif (k > b) printf ","\n\t\t\t\tprintf "\\"%s\\"", lone[k]\n\t\t\t}\n\t\t\tprintf ");\\n"\n\t\t}\n\t\tprintf "-- bursts:%d grouped:%d lone:%d\\n", nb, nm, nl\n\t}'
++ grep '^-- bursts:' /tmp/tmp.G1CKkw0gaj
++ sed 's/^-- /  /'
+  bursts:91 grouped:187 lone:3384
++ mysql probeprint
++ rm -f /tmp/tmp.G1CKkw0gaj
+++ date +%H:%M:%S.%3N
++ echo 'ssid_2bursts-vht stop 17:50:53.391'
+ssid_2bursts-vht stop 17:50:53.391
++ mysql probeprint
++ is_uniq
+++ date +%H:%M:%S.%3N
++ echo is_uniq start 17:50:53.730
+is_uniq start 17:50:53.730
++ ssids=.
++ '[' -z . ']'
+++ mysql -N probeprint
++ ssids=
++ uniq=0
+++ echo
+++ tr : '\n'
+++ sort
+++ uniq
+++ wc -l
++ uniq=1
++ [[ 1 -lt 2 ]]
++ mysql probeprint
++ '[' -z ']'
+++ date +%H:%M:%S.%3N
++ echo is_uniq stop 17:50:53.864
+is_uniq stop 17:50:53.864

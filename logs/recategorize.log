@@ -1,0 +1,28 @@
+recategorize_unknown start 08:32:43.806
+  loaded 101 CPE brand keywords
+  -> TECH_CPE from an operator brand : 0
+  -> TECH_CPE from name shape only   : 0
+  -> TECH_GUEST                      : 0
+  -> BIZ_STAFF (workplace marker)    : 0
+  -> OTHER_HOUSEHOLD (residence)     : 0
+  -> TECH_CPE from generic net word  : 0
+  -> TECH_IOT                        : 0
+  -> OTHER_NUMERIC                   : 0
+  still OTHER_UNKNOWN                : 0
+recategorize_unknown stop 08:32:43.911
+enumerate_cpe_region start 08:32:43.913
+  operators identified: 0
+enumerate_cpe_region stop 08:32:44.019
+=== category distribution ===
+  NAME                      69924
+  LOCATION_SPECIFIC           159
+  CULTURE_KANJI                60
+  CULTURE_CRYLIC               29
+  CULTURE_GREEK                21
+  CULTURE_EMOJI                10
+  CULTURE_ARABIC                8
+  CULTURE_HEBREW                6
+  CULTURE_KOREAN                3
+  CULTURE_JAPANESE              2
+  OTHER_HOUSEHOLD               1
+  OTHER_UNKNOWN                 1

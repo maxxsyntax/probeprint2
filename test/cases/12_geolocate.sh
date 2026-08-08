@@ -17,7 +17,7 @@ mysql probeprint -e "insert ignore into ssid_intel (ssid_hex) values (lower(hex(
 # --- coordinates are extracted, not discarded -----------------------------
 # The pipeline previously parsed country/region/city/road out of these same
 # files and threw trilat/trilong away.
-./standalone_geolocate.sh >/tmp/geo.log 2>&1
+./analysis-scripts/geolocate.sh >/tmp/geo.log 2>&1
 
 assert_eq "a single-location SSID gets coordinates" "41.86254768,-87.91438916" \
     "$(sq1 "select concat_ws(',',lat,lon) from ssid_intel where ssid_hex=lower(hex('OneCity'));")"
@@ -38,7 +38,7 @@ assert_eq "a multi-city SSID is left without coordinates" "NULL" \
 # exactly one, so its coordinates are definitive.
 mysql probeprint -e "insert ignore into ssid_intel (ssid_hex) values
   (lower(hex('CaseNet'))), (lower(hex('DupExactNet'))), (lower(hex('CampusNet')));"
-./standalone_geolocate.sh >/tmp/geo2.log 2>&1
+./analysis-scripts/geolocate.sh >/tmp/geo2.log 2>&1
 
 assert_eq "one exact-case match among three yields coordinates" "48.85837009,2.29448128" \
     "$(sq1 "select concat_ws(',',lat,lon) from ssid_intel where ssid_hex=lower(hex('CaseNet'));")"
@@ -85,12 +85,12 @@ assert_not_contains "the default path does not call Google" \
 
 # --- idempotent ------------------------------------------------------------
 before=$(sq "select ssid_hex,lat,lon from ssid_intel order by ssid_hex;" | md5sum)
-./standalone_geolocate.sh >/dev/null 2>&1
+./analysis-scripts/geolocate.sh >/dev/null 2>&1
 assert_eq "re-running changes nothing" "$before" \
     "$(sq "select ssid_hex,lat,lon from ssid_intel order by ssid_hex;" | md5sum)"
 
 # --- directed probes yield BSSIDs -----------------------------------------
-./standalone_geolocate.sh --bssids >/tmp/bssid.log 2>&1
+./analysis-scripts/geolocate.sh --bssids >/tmp/bssid.log 2>&1
 
 assert_eq "two directed-probe BSSIDs harvested" "2" \
     "$(sq1 "select count(*) from bssid_geo;")"
@@ -102,7 +102,7 @@ assert_eq "the SSID asked for is kept alongside the BSSID" "$(hexof OneCity)" \
     "$(sq1 "select ssid_hex from bssid_geo where bssid='de:ad:be:ef:00:01';")"
 
 # --- Apple stays off unless deliberately enabled --------------------------
-source ./geolocate_functions.sh
+source ./analysis-scripts/geolocate_functions.sh
 out=$(geo_apple_bssid de:ad:be:ef:00:01 2>&1); rc=$?
 assert_eq "the Apple provider refuses by default" "1" "$rc"
 assert_contains "and explains why rather than failing silently" \
@@ -118,8 +118,65 @@ out=$(GOOGLE_GEOLOCATION_KEY=dummy geo_google_observer de:ad:be:ef:00:01 2>&1); 
 assert_eq "Google provider refuses a single BSSID" "1" "$rc"
 assert_contains "and explains it needs two or more" "at least 2 BSSIDs" "$out"
 
+# --- the guard converges ---------------------------------------------------
+# geo_match_count is set for every row examined, so `is null` means "never
+# looked at". Guarding on the coordinates alone could not converge: an SSID
+# WiGLE has no response for never gets a lat, so it was re-examined on every
+# run forever. On a real corpus that was the single most expensive pass.
+out=$(./analysis-scripts/geolocate.sh 2>&1)
+assert_contains "a second run examines nothing new" "unique exact-case match (definitive) : 0" "$out"
+assert_eq "and every row it saw before stays scored" "0" \
+    "$(sq1 "select count(*) from ssid_intel
+             where ssid_hex in (lower(hex('OneCity')), lower(hex('NoResults')))
+               and geo_match_count is null;")"
+
+# --recompute is the way back in after refreshing the cache.
+out=$(./analysis-scripts/geolocate.sh --recompute 2>&1)
+assert_contains "--recompute examines them again" "unique exact-case match (definitive) : 2" "$out"
+
+# --- the cache is read once, not probed per row ---------------------------
+# geo_locs_file forks xxd and jq to spell the legacy filename conventions, and
+# pays that on every MISS -- which is the common case, since a corpus holds far
+# more SSIDs than WiGLE has been asked about. The directory is now indexed once
+# up front instead. These assertions pin the behavior that made it safe to swap.
+out=$(./analysis-scripts/geolocate.sh --recompute 2>&1)
+assert_contains "the cache is indexed once, and the count reported" \
+    "indexed" "$out"
+
+source ./analysis-scripts/geolocate_functions.sh
+geo_cache_index >/dev/null
+
+# The index must resolve exactly what the per-row lookup resolved, under all
+# three naming conventions -- hex, URI-escaped, and plain text.
+mismatch=0
+for s in OneCity ManyCities CaseNet NoResults TooMany CampusNet DupExactNet Uncached; do
+    h=$(hexof "$s")
+    old=$(geo_locs_file "$h" 2>/dev/null) || old=""
+    new=${GEO_CACHE_FILE[$h]:-}
+    [ "$old" = "$new" ] || mismatch=$((mismatch+1))
+done
+assert_eq "the index agrees with the per-row lookup on every fixture" "0" "$mismatch"
+
+# --- an empty cache directory is refused, not walked ----------------------
+# GEO_LOCS_DIR defaults to a relative 'locs' that a fresh checkout does not
+# have. Pointed somewhere empty, the pass used to walk the entire corpus paying
+# a full filename probe per row to discover nothing was there.
+empty=$(mktemp -d)
+out=$(GEO_LOCS_DIR="$empty" ./analysis-scripts/geolocate.sh 2>&1); rc=$?
+assert_eq "an empty cache directory is not an error" "0" "$rc"
+assert_contains "and the pass says the cache is empty" "no cached WiGLE responses" "$out"
+assert_contains "and names the variable to fix" "GEO_LOCS_DIR" "$out"
+assert_not_contains "and does not claim to have examined anything" \
+    "unique exact-case match" "$out"
+
+out=$(GEO_LOCS_DIR="$empty/does_not_exist" ./analysis-scripts/geolocate.sh 2>&1); rc=$?
+assert_eq "a missing cache directory is handled the same way" "0" "$rc"
+assert_contains "and reports it rather than failing obscurely" \
+    "no cached WiGLE responses" "$out"
+rmdir "$empty" 2>/dev/null
+
 # --- coverage report -------------------------------------------------------
-rep=$(./standalone_geolocate.sh --report 2>&1)
+rep=$(./analysis-scripts/geolocate.sh --report 2>&1)
 assert_contains "report counts located SSIDs" "SSIDs with coordinates" "$rep"
 assert_contains "report counts directed-probe BSSIDs" "directed-probe BSSIDs" "$rep"
 

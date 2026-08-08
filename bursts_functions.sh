@@ -397,13 +397,20 @@ done
 
 
 
-#NOT CURRENTLY WIRED UP: the call in build_bursts.sh is commented out, and this
-#function still has unresolved problems beyond the IFS scoping below --
-#`ssids=($(...))` splits a "time<TAB>ssids" result on ':' only, so ssids[0] holds
-#the timestamp glued to the first SSID by a tab rather than the timestamp alone,
-#and the loop indexes from 1 as though that were correct. There are also
-#unquoted `[ -n $ignore_check ]` tests and a `${ssids[$ssdi]}` typo. Left as
-#found rather than rewritten blind, since there is no test data for it.
+#NOT CURRENTLY WIRED UP: the call in build_bursts.sh is still commented out, so
+#this runs nowhere and has no test data. The known bugs are now repaired, so it
+#is ready to wire up and exercise on a real capture:
+#  - the retrieval selected `time,ssids` (tab-separated), then split on ':'
+#    only, gluing the timestamp onto the first SSID in ssids[0]. It now selects
+#    concat_ws(':', time, ssids), so ssids[0] is the timestamp and ssids[1..]
+#    are the SSIDs, which is the indexing the rest of the function assumes.
+#  - the `[ -n/-z $ignore_check ]` tests are now quoted, and the `${ssids[$ssdi]}`
+#    typo is fixed to `${ssids[$ssidi]}`.
+#  - the "too common to correlate on" gate now reads ssid_intel.rarity
+#    (rarity < 15, matching display.sh's rare-network threshold) instead of the
+#    superseded is_common flag; airports are still excluded.
+#Because it has never run against real data, verify the burst-relation output
+#before trusting it.
 find_relatedbursts () {
 echo starting find_relatedbursts $(date +"%H:%M:%S.%3N")
 while true; do
@@ -415,7 +422,7 @@ local IFS=:
 ###set related_burst to ignore for bursts of non-unique common ssids
 ###
 #select unprocessed rowid and break into array
-ssids=($(mysql -N probeprint <<< "select time,ssids from bursts where burst_duration != 0 and burst_size > 1 and related_burst = 0 and is_uniq=1 and time != \"\" limit 1;")); 
+ssids=($(mysql -N probeprint <<< "select concat_ws(':', time, ssids) from bursts where burst_duration != 0 and burst_size > 1 and related_burst = 0 and is_uniq=1 and time != \"\" limit 1;"));
 echo ${ssids[*]}
 #check for value
 if [[ -z ${ssids} ]]
@@ -441,8 +448,8 @@ if [[ $uniq -lt 2 ]]
 	then 
 	echo only 1 unique ssid in burst
 	echo doing ignore check
-	ignore_check=$(mysql -N probeprint <<< "select ssid_hex from ssid_intel where (is_common=1 or is_airport IS NOT NULL) and ssid_hex=\"${ssids[1]}\";")
-	if [ -n $ignore_check ]; 
+	ignore_check=$(mysql -N probeprint <<< "select ssid_hex from ssid_intel where ((rarity is not null and rarity < 15) or is_airport IS NOT NULL) and ssid_hex=\"${ssids[1]}\";")
+	if [ -n "$ignore_check" ];
 		then
 		echo ssid ${ssids[1]} is on ignore list, setting related burst to self
 		mysql probeprint <<< "update bursts set related_burst=\"${ssids[0]}\" where time=\"${ssids[0]}\";"
@@ -467,14 +474,14 @@ until [[ "$ssidi" == "$ssidn" ]]
 	#echo $ssidi
 	#echo ${ssids[$ssidi]}
 	echo doing ignore check
-	ignore_check=$(mysql -N probeprint <<< "select ssid_hex from ssid_intel where (is_common=1 or is_airport IS NOT NULL) and ssid_hex=\"${ssids[$ssidi]}\";")
-	if [ -z $ignore_check ]; 
+	ignore_check=$(mysql -N probeprint <<< "select ssid_hex from ssid_intel where ((rarity is not null and rarity < 15) or is_airport IS NOT NULL) and ssid_hex=\"${ssids[$ssidi]}\";")
+	if [ -z "$ignore_check" ];
 		then
 		#No value so not on the ignore list
 		mysql probeprint <<< "update bursts set related_burst=\"${ssids[0]}\" where (ssids like \"%:${ssids[$ssidi]}:%\" or ssids like \"${ssids[$ssidi]}:%\" or ssids like \"%${ssids[$ssidi]}\" or ssids=\"{ssids[$ssidi]}\") AND related_burst != \"IGNORE\";"
 		echo updated ssids like ${ssids[$ssidi]} with time  ${ssids[0]}
 		#end extra action
-		else echo ${ssids[$ssdi]} is on ignore list
+		else echo ${ssids[$ssidi]} is on ignore list
 	fi
 	#move to next ssid for both ignore and not ignore
 	((ssidi++))

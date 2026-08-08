@@ -140,7 +140,7 @@ device_id_type=$(mysql -N probeprint -e "select data_type from information_schem
 if [ "$device_id_type" = "varchar" ]; then
 	echo "MIGRATION: ssid.device_id was varchar (the unstable dev-NNNNNN scheme)."
 	echo "           Those ids collided across incremental runs, so they are being"
-	echo "           cleared. Re-run ./standalone_seqgraph.sh to regenerate."
+	echo "           cleared. Re-run ./analysis-scripts/seqgraph.sh to regenerate."
 	mysql probeprint -e "update ssid set device_id = null;"
 	mysql probeprint -e "alter table ssid modify column device_id int default null;"
 fi
@@ -186,10 +186,10 @@ mysql probeprint -e "alter table ssid_intel add column if not exists geo_accurac
 #                         only meaningful if they sit close together.
 #   geo_match_count = 0   WiGLE knows the name only in other letter cases.
 #
-# This is a strictly better signal than ssid_intel.is_oneloc, which keys on
-# WiGLE's totalResults == 1 -- a case-insensitive count that conflates
-# "MyNet" with "mynet". is_oneloc is left as it is so existing rows keep their
-# meaning, but prefer geo_match_count.
+# ssid_intel.is_oneloc is now derived from this column rather than from WiGLE's
+# case-insensitive totalResults, so the two always agree; see derive_is_oneloc
+# in geolocate_functions.sh. Rows written by the old heuristic are stale until
+# ./analysis-scripts/oneloc.sh --recompute has run.
 mysql probeprint -e "alter table ssid_intel add column if not exists geo_match_count int default null;"
 
 # ---------------------------------------------------------------------------
@@ -244,6 +244,29 @@ mysql probeprint -e "create table if not exists bssid_geo (
 
 # Lookup table built from lists/ssid.csv by standalone_rarity.sh.
 mysql probeprint -e "create table if not exists ssid_freq(ssid_hex varchar(255) primary key, total bigint not null) $DB_COLLATE;"
+
+# ---------------------------------------------------------------------------
+# Google Places lookup: an SSID that names a business, resolved to that
+# business's address.
+#
+# This is a DIFFERENT KIND OF CLAIM from the WiGLE columns, and the distinction
+# is the whole reason these are separate. WiGLE says "an access point with this
+# SSID was observed at these coordinates" -- a measurement. Places says "a venue
+# with this name is at this address", and that location only transfers to the
+# device if the SSID really is that venue's network. That is an inference, and
+# it is wrong for every SSID that merely borrows a business name.
+#
+#   place_match_count  candidates whose name matched after normalization.
+#                      NULL = never queried, which is what drives the pass.
+#                      0 = asked, nothing matched. 1 = the definitive case.
+#   place_name         what Google actually called the match, kept so that a
+#                      wrong match can be recognized as wrong afterwards.
+#
+# Coordinates go in lat/lon with geo_source = 'google_places', so anything
+# needing observations only can filter on geo_source instead of joining a
+# second set of columns. Do not read a google_places row as a sighting.
+mysql probeprint -e "alter table ssid_intel add column if not exists place_match_count int default null;"
+mysql probeprint -e "alter table ssid_intel add column if not exists place_name varchar(128) default null;"
 
 # ---------------------------------------------------------------------------
 # Converge the collation of any table that already existed.

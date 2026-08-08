@@ -1,0 +1,6 @@
+Fidelity script
+Pintor & Atzori 2021 +2024 - zendo - ground truth behind ie
+Semianechoic chamber
+Robyns 545970
+WiFi+BLE RSSI - research
+reread idea.txt;  directory structure should be divided into capture, analysis, display.  a capture.sh,analysis.sh and display.sh should be in the top level directory while functions should go in capture-scripts, analysis-scripts, display-scripts.  analysis functions show not be stored in a monithlic script, standalone should be removed from name, the name should reflect if they require online mode, or they take a long time to complete.

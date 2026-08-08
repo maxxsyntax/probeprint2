@@ -14,7 +14,7 @@ mysql probeprint -e "delete from ssid; delete from ssid_intel; delete from burst
 
 # Import through the real pcap path, which shares ingest_functions.sh with the
 # live capture path.
-./pcap2db.sh "$PCAP" >/tmp/ingest.log 2>&1
+./capture-scripts/pcap2db.sh "$PCAP" >/tmp/ingest.log 2>&1
 
 # --- happy path -----------------------------------------------------------
 row=$(sq1 "select concat_ws('/',wlan_sa,rssi,freq,seq,vht) from ssid where ssid_hex='$(hexof HomeNetwork)';")

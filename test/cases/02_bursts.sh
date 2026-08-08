@@ -7,7 +7,7 @@
 source "${REPO:-/opt/probeprint2}/test/lib.sh"
 cd "$REPO"
 
-source ./bursts_functions.sh
+source ./analysis-scripts/bursts_functions.sh
 reset_db
 
 # --- grouping by MAC address ---------------------------------------------
@@ -58,11 +58,75 @@ assert_not_contains "vht pass produced no SQL error" \
 assert_eq "vht pass created at least one burst" \
     "1" "$(sq1 "select least(count(*),1) from bursts where bmethod='vht';")"
 
-# --- rssi comparison is numeric, not lexicographic -----------------------
-# '-42' <= '-40' is false as strings but true as numbers. If the cast were
-# missing, no rssi-banded burst could ever form.
-assert_eq "negative rssi compares numerically" \
-    "1" "$(sq1 "select cast('-42' as signed) <= -40;")"
+# --- RSSI no longer gates burst membership -------------------------------
+# Both passes used to require two frames to be within +/-2 dBm. Measured on a
+# labelled corpus of 22 stationary devices in a semi-anechoic chamber -- the
+# quietest such capture can be -- consecutive frames from ONE device moved a
+# mean of 9.6 dBm and exceeded 2 dBm 40% of the time, so the gate was rejecting
+# about 40% of genuine same-device pairs.
+#
+# Two frames 55 dBm apart, adjacent in time and sequence, must now group.
+mysql probeprint -e "delete from bursts where bmethod='seq';"
+mysql probeprint -e "insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht,is_processed) values
+  (lower(hex('WideSwingA')),'0a:00:00:00:0e:01','1700060000.000000','-20',2437,900,'0x1',1),
+  (lower(hex('WideSwingB')),'0a:00:00:00:0e:02','1700060000.400000','-75',2437,902,'0x1',1);"
+ssid2bursts-seq >/tmp/burst_rssi.log 2>&1
+
+assert_eq "frames 55 dBm apart still form one burst" "1" \
+    "$(sq1 "select count(*) from bursts
+             where bmethod='seq' and time='1700060000.000000' and burst_size >= 2;")"
+assert_not_contains "and the pass reported no error doing it" \
+    "ERROR" "$(cat /tmp/burst_rssi.log)"
+
+# A frame with no radiotap has no RSSI at all. It used to be pushed out of this
+# stage unmatchable; sequence number is what this method correlates on, and that
+# is still present.
+mysql probeprint -e "delete from bursts where bmethod='seq';"
+mysql probeprint -e "insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht,is_processed) values
+  (lower(hex('NoRadiotapA')),'0a:00:00:00:0f:01','1700070000.000000',NULL,2437,1200,'0x1',1),
+  (lower(hex('NoRadiotapB')),'0a:00:00:00:0f:02','1700070000.300000',NULL,2437,1201,'0x1',1);"
+ssid2bursts-seq >/dev/null 2>&1
+assert_eq "frames with no RSSI at all still group by sequence" "1" \
+    "$(sq1 "select count(*) from bursts
+             where bmethod='seq' and time='1700070000.000000' and burst_size >= 2;")"
+
+# --- burst boundaries: gap-based vs the fixed window ---------------------
+# Six frames from one MAC, each 0.8s after the last, spanning 4 seconds. It is
+# one continuous burst, and BURST_SHAPE decides whether it is reported as one.
+#
+# The window form cuts at BURST_WINDOW seconds from whichever frame anchored the
+# burst, so a run straddling that boundary is reported as several and
+# burst_duration can never exceed the window -- which is why FINGERPRINTING.md
+# calls burst_size and burst_duration partly artifacts of it.
+chain=""
+for i in 0 1 2 3 4 5; do
+    chain="$chain$(printf '17000000%02d.%d|aa:bb:cc:dd:ee:ff|616161|%d\n' \
+                   $((i * 8 / 10)) $(((i * 8) % 10)) $((5 + i)))"$'\n'
+done
+
+windowed=$(printf '%s' "$chain" | BURST_SHAPE=window bash -c \
+    'source ./analysis-scripts/bursts_functions.sh; _bursts_group wlan_sa 1 exact')
+gapped=$(printf '%s' "$chain" | BURST_SHAPE=gap bash -c \
+    'source ./analysis-scripts/bursts_functions.sh; _bursts_group wlan_sa 1 exact')
+
+assert_contains "the fixed window splits one continuous burst into several" \
+    "bursts:3" "$windowed"
+assert_contains "gap detection reports it as one" "bursts:1" "$gapped"
+assert_contains "and recovers its true duration" "4.0000000" "$gapped"
+assert_contains "and its true size" ",6," "$gapped"
+assert_not_contains "which the window could never do -- it caps at BURST_WINDOW" \
+    "4.0000000" "$windowed"
+
+# Both shapes must account for every frame; neither may drop one.
+assert_contains "the window shape loses no frames" "grouped:6" "$windowed"
+assert_contains "the gap shape loses no frames" "grouped:6" "$gapped"
+
+# A real silence still ends a burst -- otherwise everything from one MAC would
+# collapse into a single burst spanning the whole capture.
+split=$(printf '1700000000.0|aa:bb:cc:dd:ee:ff|616161|5\n1700000000.5|aa:bb:cc:dd:ee:ff|626262|6\n1700000060.0|aa:bb:cc:dd:ee:ff|636363|7\n' \
+        | BURST_SHAPE=gap bash -c 'source ./analysis-scripts/bursts_functions.sh; _bursts_group wlan_sa 1 exact')
+assert_contains "a gap longer than BURST_GAP ends the burst" "bursts:1" "$split"
+assert_contains "and the frame after the silence is left alone" "lone:1" "$split"
 
 # --- is_uniq ------------------------------------------------------------
 is_uniq >/tmp/burst_uniq.log 2>&1

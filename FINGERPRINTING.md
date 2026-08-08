@@ -8,6 +8,7 @@ Working notes behind the fingerprinting passes. Sources are three papers kept in
 | **Pintor 2022** | Pintor & Atzori, *Analysis of Wi-Fi Probe Requests Towards Information Element Fingerprinting*, IEEE GLOBECOM 2022 |
 | **Cunche 2012** | Cunche, Kaafar & Boreli, *I know who you will meet this evening! Linking wireless devices using Wi-Fi probe requests*, IEEE WoWMoM 2012 |
 | **Cheshire 2019** | Soundararaj, Cheshire & Longley, *Estimating Real-Time Highstreet Footfall from Wi-Fi Probe Requests*, UCL 2019 |
+| **Vanhoef 2016** | Vanhoef, Matte, Cunche, Cardoso & Piessens, *Why MAC Address Randomization is not Enough: An Analysis of Wi-Fi Network Discovery Mechanisms*, ACM ASIA CCS 2016 |
 
 ---
 
@@ -116,9 +117,16 @@ present: `ssid_intel.rarity` and per-device SSID sets from `ssid.device_id`.
 
 ## Sequence-number graphs beat sequence-number windows
 
-Cheshire 2019 exploits the fact that the 12-bit sequence counter in the MAC
-header **is not reset when a device rotates its randomized MAC address**. Their
-graph:
+The core observation — that the 12-bit sequence counter is **not reset when a
+device rotates its randomized MAC** — is Vanhoef 2016's. They pair it with the IE
+fingerprint (§3, below): cluster probes by IE fingerprint first, then split each
+cluster by sequence-number continuity, and you track a device across MAC rotation
+without any stable identifier. On real datasets that recovered as much as 50% of
+devices over 20 minutes. It is the method this repo's `seqgraph` is a variant of;
+Cheshire 2019 refined the same idea into an explicit graph, which is what we
+implement.
+
+Cheshire 2019's graph:
 
 - nodes are probe requests
 - edges go forward in time only, and low → high sequence number
@@ -188,11 +196,56 @@ built here as a competing identity signal. Two better uses:
   that probe rate tracks screen state, that is an attention signal, orthogonal
   to identity.
 
-Not yet done: burst detection itself is still a fixed one-second window from an
-arbitrary anchor frame, which splits bursts straddling the boundary and merges
-adjacent ones. `burst_size` and `burst_duration` are therefore partly artifacts
-of the window. Gap-based detection would fix it, and should land before either
-is trusted as a feature.
+### Burst boundaries: gap-based, not a fixed window
+
+Burst detection used to claim everything within one second of whichever frame
+happened to anchor the burst, then anchor the next burst on the first unclaimed
+frame. That splits a continuous run at an arbitrary point and caps
+`burst_duration` at the window by construction — the value could never report
+anything longer, whatever the traffic did.
+
+Six frames from one MAC, each 0.8s after the last:
+
+| shape | bursts | sizes | durations |
+|---|---|---|---|
+| `window` | 3 | 2, 2, 2 | 0.8s each |
+| `gap` | 1 | 6 | 4.0s |
+
+`BURST_SHAPE=gap` (the default) instead continues a burst for as long as frames
+keep arriving within `BURST_GAP` of the previous one, with no ceiling.
+`BURST_SHAPE=window` is retained so the two can be compared on a given capture.
+
+Measured on a real collection the aggregate effect was modest — slightly fewer,
+slightly larger bursts — but the duration ceiling was absolute, and the tail is
+where the long bursts are. Check both shapes on your own capture before treating
+`burst_size` or `burst_duration` as a feature; the numbers for any particular
+collection belong in that engagement's notes, not here.
+
+### RSSI is not an identity signal
+
+Both the sequence and VHT burst passes used to require two frames to be within
+**±2 dBm** to be considered the same burst. Measured against Pintor & Atzori's
+labelled corpus — 22 known devices, stationary, in a semi-anechoic chamber,
+which is about the quietest environment such a capture can have:
+
+| | |
+|---|---|
+| mean jump between consecutive frames from **one** device | **9.6 dBm** |
+| consecutive same-device pairs exceeding 2 dBm | **40%** |
+| exceeding 10 dBm | **23%** |
+| within-device standard deviation | **13.4 dBm** |
+| between-device spread of per-device means | **3.0 dBm** |
+
+The noise is **4.5× the signal**: one device's own readings scatter four times
+wider than the devices differ from each other. The ±2 dBm gate was therefore
+rejecting about 40% of genuine same-device pairs, and the `seq` pass — the one
+that can see through MAC randomization — was almost entirely disabled by it.
+Both gates are gone.
+
+This is Cheshire 2019's conclusion reached from the other direction, and it
+matches Pintor 2022 finding that adding weaker features made IE clustering
+worse. RSSI remains right for qualitative proximity in `display.sh`. It carries
+no identity.
 
 ### Static MACs are free ground truth
 
@@ -211,6 +264,42 @@ a synthetic fixture, and it is the right way to tune α and β per site.
 Randomized addresses are the locally-administered ones — bit 1 of the first
 octet set, bit 0 clear for a unicast source — so the second hex digit is one of
 `2`, `6`, `a`, `e`. This is Cheshire's shortcut.
+
+**They are an input, not only a check.** For a long time this was used solely to
+score the clustering afterwards, while the graph itself never saw `wlan_sa` — it
+selected only time, sequence number and IE fingerprint. A device that does not
+randomize could therefore be held together only by sequence continuity, and
+fragmented whenever that broke. Against labelled ground truth one device with a
+single address and a single IE fingerprint came out as **137 separate devices**.
+
+`seqgraph_assign` now unions frames sharing a globally-administered MAC before
+any inference runs. On the same corpus that alone took the total from 1,102
+clusters to 852 and made every non-randomizing device whole, without introducing
+a single false merge. If the answer is known, do not infer it.
+
+### Calibrating α and β against labelled data
+
+`--validate` measures error on your own capture, which is what matters at a
+site, but it can only score the static minority. Pintor & Atzori publish a
+labelled corpus where every capture is one known device *including* the
+randomizing ones (CC-BY-4.0; see `../wifi_research/DATASETS.md`), which turns
+α/β from a guess into a measurement.
+
+Sweeping it produced a clear result: **α=90/β=400, the defaults, are far too
+tight**, over-splitting roughly ninefold against the achievable floor while
+producing no false merges to justify the caution. Widening to α=1200/β=4095 —
+β=4095 being the ceiling, since the counter is 12 bits — reached within 14% of
+the floor, still with zero false merges.
+
+Two caveats before copying those numbers into `.env`. That corpus is 22 devices
+in a chamber; a false merge needs two devices whose counters coincidentally
+align, and the risk of that scales with the population in range, so a conference
+floor is a different problem. And the floor itself is set by capture sessions —
+frames from one device days apart cannot and should not be linked by any α.
+
+What transfers is the direction and the method: the defaults are too
+conservative, and the boundary should be found by widening until `--validate`
+reports the first merge, not assumed.
 
 ### Its real failure mode
 
@@ -278,10 +367,12 @@ Roughly in descending order of value for this engagement:
    `ssid_intel.rarity` holds the per-SSID weight, so the metric is a join away:
    `Psim-3(X,Y) = Σ 1/f(z)³` over the SSIDs two devices share. This is the
    highest-value remaining gap.
-2. **Wi-Fi ↔ Bluetooth correlation** — the stated goal in `../idea.txt`, still
-   entirely unimplemented. Correlate by co-presence window, RSSI correlation and
-   joint appear/disappear. BLE frequently carries a real human name where Wi-Fi
-   does not.
+2. **Wi-Fi ↔ Bluetooth correlation** — a stated goal of the engagement (see the
+   workspace `../CLAUDE.md`), still entirely unimplemented: it would join this
+   database to Blue2thprinting's `bt2`, and nothing links the two today.
+   Correlate by co-presence window, RSSI correlation and joint
+   appear/disappear. BLE frequently carries a real human name where Wi-Fi does
+   not.
 3. **Multi-node trilateration** — `client/` already deploys three capture nodes
    writing to one database. The capability is latent and unused.
 4. **Timing and behavioral signal** — inter-burst interval, frames per burst,
@@ -290,10 +381,91 @@ Roughly in descending order of value for this engagement:
    attention signal, not just a presence signal.
 5. **Frame length and IE ordering as standalone features** — `ie_order` is now
    captured but nothing consumes it yet beyond the `ie_fp` hash.
-6. **PHY-layer fingerprinting** — scrambler seed (Vo-Huu 2016, Bloessl 2015),
-   clock skew / carrier frequency offset, IQ imbalance. Survives MAC
-   randomization *and* IE homogenisation. Requires an SDR, not commodity
-   monitor mode. Out of scope for this hardware.
+6. **WPS UUID → real MAC.** Vanhoef 2016 §3.2 showed the WPS Universal Unique
+   Identifier some devices include in probe requests is `wpa_supplicant`'s
+   `SHA-1(real_MAC, fixed_salt)` truncated to 16 bytes. The MAC space is small
+   enough to brute-force, so the UUID **reverses to the real, non-randomized
+   MAC** — they recovered it for ~75% of WPS-advertising devices, and the real
+   MAC is directly WiGLE-able. Only a minority of devices emit the element
+   (single-digit percentages in their datasets), but for those it defeats
+   randomization outright with a purely passive capture. This is the one new
+   finding here that is exploitable on commodity monitor-mode hardware; it needs
+   `wps.uuid_e` captured in `ingest_functions.sh` and an offline reversal pass.
+   The same element's presence/stability is also a weak IE feature (Pintor's
+   "WPS UUID" row).
+7. **PHY-layer fingerprinting** — scrambler seed (Vo-Huu 2016, Bloessl 2015;
+   Vanhoef 2016 §5 found commodity radios use predictable seeds, adding ~7 bits
+   and up to +10% tracking), clock skew / carrier frequency offset, IQ
+   imbalance. Survives MAC randomization *and* IE homogenisation. Requires an
+   SDR, not commodity monitor mode. Out of scope for this hardware.
+
+Two active attacks from the same paper are noted but deliberately **out of
+scope** — this is a passive collector. Vanhoef 2016 §6 revealed the real MAC of
+17.4% of devices by broadcasting popular SSIDs (a revived Karma attack) and 5.2%
+via a fake Hotspot 2.0 AP soliciting ANQP queries. Both require transmitting, so
+they belong to an engagement's active phase, not this pipeline.
+
+## Trace fidelity: measuring what was not captured
+
+Every pass here treats the `ssid` table as the population. It is a sample, and
+not a uniform one. Schulman, Levin & Spring, *On the Fidelity of 802.11 Packet
+Traces* (PAM 2008), showed that a passive monitor's **completeness** — the
+fraction of transmitted frames it actually records — varies sharply with network
+load, venue and channel, and argued that any analysis over a trace should first
+establish how complete that trace is. Their **T-Fi plots** put completeness on
+one axis against offered load on the other.
+
+Project and GPL tooling: <http://www.cs.umd.edu/projects/wifidelity/>, also
+archived as CRAWDAD `tools/analyze/pcap/wifidelity`. Their `tracestats` estimates
+completeness from **802.11 sequence numbers**, which is the part that transfers
+directly: the counter is a per-transmitter frame index, so the gap between two
+consecutive captured frames from one address says how many of that device's
+frames went unrecorded, with no reference trace required.
+
+Three consequences for this pipeline:
+
+- **The sequence graph's tolerances are a fidelity parameter.** `SEQGRAPH_ALPHA`
+  and `SEQGRAPH_BETA` decide how large a sequence gap may be and still be
+  treated as the same device. That is exactly the quantity `tracestats`
+  measures. Note the gap has two causes that are indistinguishable and,
+  for this purpose, equivalent: a frame the monitor missed, and a non-probe
+  frame the device sent that ingest filters out. Either way the counter advanced
+  unobserved, so the observed gap distribution is the right thing to fit the
+  tolerances to — per venue, rather than as a global constant.
+- **Absence is not evidence.** `device_ssid` is a lower bound on a preferred
+  network list, so `pnl_size` and `pnl_rarity` understate identifiability, and
+  "not in range" may mean "not captured". A completeness figure is what lets
+  either be qualified rather than asserted.
+- **Merged traces are the mitigation, and are also what they studied.** Multiple
+  monitors improve completeness non-uniformly. `client/` already writes several
+  capture nodes into one database, which makes this measurable rather than
+  assumed. Channel coverage is the same argument one level up: a single-radio
+  capture on one band cannot see probes sent on another, and that is a gap no
+  amount of enrichment recovers.
+
+  Robyns et al. published simultaneous captures of one festival crowd from
+  several monitoring stations (CC-BY-4.0; see `../wifi_research/DATASETS.md`).
+  Counting distinct devices as stations are added:
+
+  | monitors | coverage of the full union |
+  |---|---|
+  | 1 | **44%** |
+  | 2 | 60% |
+  | 3 | 73% |
+  | 4 | 88% |
+  | 5 | 100% |
+
+  **One radio saw fewer than half the devices five radios saw**, and the curve
+  had not flattened at five. Note this measures something the sequence-number
+  estimator structurally cannot: a device never heard at all leaves no counter
+  to find a gap in. Completeness has two independent components — frames missed
+  from devices you did hear, and devices you never heard — and only the first is
+  estimable from a single trace.
+
+Implemented as `standalone_fidelity.sh` / `fidelity_functions.sh`. Read-only,
+offline, safe to run during capture. The thresholds there (burst gap, maximum
+attributable delta) are ours: the paper's own parameters could not be
+recovered from the published PDF.
 
 ### On RSSI
 

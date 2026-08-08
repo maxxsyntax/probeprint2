@@ -6,13 +6,13 @@ cd "$REPO"
 
 reset_db
 mysql probeprint -e "insert ignore into ssid_intel (ssid_hex) select distinct ssid_hex from ssid;"
-./standalone_categorize.sh >/dev/null 2>&1
+./analysis-scripts/categorize.sh >/dev/null 2>&1
 
 # The premise: script detection is blind to every one of these.
 assert_eq "script detection leaves Latin-script German unclassified" "OTHER_UNKNOWN" \
     "$(sq1 "select category from ssid_intel where ssid_hex=lower(hex('Netzwerk Mueller'));")"
 
-./standalone_language.sh >/tmp/lang.log 2>&1
+./analysis-scripts/slow_language.sh >/tmp/lang.log 2>&1
 
 # --- single-language markers ----------------------------------------------
 assert_eq "German is identified from vocabulary" "de|language" \
@@ -53,11 +53,11 @@ assert_not_contains "a family-only match does not set CULTURE_" "CULTURE_" \
 
 # --- idempotent -----------------------------------------------------------
 before=$(sq "select ssid_hex,ifnull(lang,''),ifnull(lang_scope,'') from ssid_intel order by ssid_hex;" | md5sum)
-./standalone_language.sh >/dev/null 2>&1
+./analysis-scripts/slow_language.sh >/dev/null 2>&1
 assert_eq "re-running changes nothing" "$before" \
     "$(sq "select ssid_hex,ifnull(lang,''),ifnull(lang_scope,'') from ssid_intel order by ssid_hex;" | md5sum)"
 
 assert_contains "the report compares against script detection" \
-    "what script detection alone found" "$(./standalone_language.sh --report 2>&1)"
+    "what script detection alone found" "$(./analysis-scripts/slow_language.sh --report 2>&1)"
 
 finish

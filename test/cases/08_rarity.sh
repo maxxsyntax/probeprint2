@@ -10,7 +10,7 @@ cd "$REPO"
 reset_db
 mysql probeprint -e "insert ignore into ssid_intel (ssid_hex) select distinct ssid_hex from ssid;"
 
-./standalone_rarity.sh >/tmp/rarity.log 2>&1
+./analysis-scripts/rarity.sh >/tmp/rarity.log 2>&1
 
 # --- the frequency table loaded ------------------------------------------
 freq_rows=$(sq1 "select count(*) from ssid_freq;")
@@ -46,7 +46,7 @@ assert_eq "a personal SSID is rarer than xfinitywifi" "1" \
 # This is the whole justification for the pass. is_common is 1 for any SSID
 # present in lists/ssid.csv, so it cannot distinguish xfinitywifi (21.8M
 # sightings) from '010101' (250). Rarity puts them ~11 apart on a log scale.
-./standalone_check_common.sh >/tmp/common.log 2>&1
+./analysis-scripts/common.sh >/tmp/common.log 2>&1
 
 assert_eq "xfinitywifi and 010101 are both 'common' to the binary flag" "1,1" \
     "$(sq1 "select concat_ws(',',
@@ -71,7 +71,7 @@ assert_eq "all-zero ssid_hex gets no rarity score" "NULL" \
 
 # --- incremental by default, and idempotent -------------------------------
 before=$(sq "select ssid_hex,rarity from ssid_intel order by ssid_hex;" | md5sum)
-./standalone_rarity.sh >/tmp/rarity2.log 2>&1
+./analysis-scripts/rarity.sh >/tmp/rarity2.log 2>&1
 after=$(sq "select ssid_hex,rarity from ssid_intel order by ssid_hex;" | md5sum)
 assert_eq "re-running changes nothing" "$before" "$after"
 assert_contains "second run skips reloading the frequency table" \

@@ -3,7 +3,11 @@
 #
 # Usage:
 #   ./summarize_location.sh <ssid_hex>   one SSID
-#   ./summarize_location.sh --new        every SSID with no location yet
+#   ./summarize_location.sh --new        every SSID with no location yet; stop
+#                                        when the WiGLE quota is exhausted
+#   ./summarize_location.sh --new --wait same, but wait out the quota and keep
+#                                        going -- the daily-grind mode driven by
+#                                        ssid2loc_every24.sh
 #
 # Called from build_ssid.sh's capture loop when `online=1` in .env.
 #
@@ -16,19 +20,25 @@ source .env
 source ./location_functions.sh
 
 if [ $# -eq 0 ]; then
-	echo "usage: $0 <ssid_hex> | --new" >&2
+	echo "usage: $0 <ssid_hex> | --new [--wait]" >&2
 	exit 1
 fi
 
 if [ "$1" = "--new" ]; then
+	# Default to the stop policy; --wait blocks through quota windows instead.
+	on_quota=stop
+	[ "$2" = "--wait" ] && on_quota=wait
+
 	# Anything not yet located. Skip the anomalous hex patterns, which are not
 	# real SSIDs and would only waste API calls.
 	while read -r ssid_hex; do
 		[ -z "$ssid_hex" ] && continue
 		[ "$ssid_hex" = "<MISSING>" ] && continue
 
-		# A failed fetch means the quota is gone; stop rather than hammering.
-		wigle_fetch "$ssid_hex" || break
+		# Under stop, a failed fetch means the quota is gone -- break rather
+		# than hammering. Under wait, wigle_fetch blocks until it succeeds and
+		# only returns non-zero on a genuine skip, so break is still correct.
+		wigle_fetch "$ssid_hex" "$on_quota" || break
 		summarize_one "$ssid_hex" || break
 	done <<< "$(mysql -N probeprint <<< "select ssid_hex from ssid_intel where location is null and ssid_hex not like '%00%' and ssid_hex not like '%fff%';")"
 	exit 0

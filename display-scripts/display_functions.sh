@@ -128,16 +128,60 @@ select concat_ws(char(31),
               from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
              where ds.device_id = d.id and i.rarity > 15
                and i.category not in ('TECH_CPE','OTHER_ANOMALOUS')), ''),
-    d.mac_count)
+    -- Networks in this device's PNL whose password is publicly known AND which
+    -- are rare. A soft target: the network can be impersonated with the known
+    -- key to draw the device onto it. Rarity is the qualifier that makes it
+    -- actionable -- a cracked 'linksys' or 'xfinitywifi' is on thousands of
+    -- devices and impersonating it targets nobody, whereas a cracked rare
+    -- network belongs to one household and re-creating it lures that person's
+    -- device specifically. Same rarity > 15 bar as the Rare nets line above.
+    ifnull((select group_concat(distinct unhex(ds.ssid_hex) separator ', ')
+              from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
+             where ds.device_id = d.id and i.is_cracked = 1 and i.rarity > 15), ''),
+    d.mac_count,
+    -- Seconds since this device was last seen BEFORE the current visit. The
+    -- >3600 gap is what makes it a prior visit rather than the same one still
+    -- in progress: a device probing continuously for ten minutes has sightings
+    -- seconds apart, and none of those is a "previous time". A returning device
+    -- -- here today, here last week -- is a far stronger intel signal than
+    -- anything in its network list, so it is computed here and shown first.
+    ifnull((select $cutoff - max(cast(s.time as decimal(20,7)))
+              from ssid s
+             where s.device_id = d.id
+               and cast(s.time as decimal(20,7)) < $cutoff - 3600), -1))
   from devices d
   join (select device_id, max(cast(rssi as signed)) as best_rssi
           from ssid
          where device_id is not null
            and cast(time as decimal(20,7)) > $cutoff
          group by device_id) r on r.device_id = d.id
- order by r.best_rssi desc
+ -- The dossier leads with people, so the roster does too: a device carrying a
+ -- human identity (a name, a household, an employer, a language) sorts ahead of
+ -- an anonymous one regardless of signal, and a returning subject ahead of a
+ -- first-time one. Signal only decides within those groups.
+ order by
+   (exists (select 1 from device_ssid ds join ssid_intel i on i.ssid_hex = ds.ssid_hex
+             where ds.device_id = d.id
+               and (   (i.is_name is not null and i.is_name not in ('0',''))
+                    or i.category = 'OTHER_HOUSEHOLD'
+                    or i.category in ('BIZ_STAFF','INDUSTRY_ORG','BIZ_COWORK','BIZ_INSTITUTION')
+                    or i.lang_scope = 'language'))) desc,
+   (exists (select 1 from ssid s where s.device_id = d.id
+             and cast(s.time as decimal(20,7)) < $cutoff - 3600)) desc,
+   r.best_rssi desc
  limit 40;
 SQL
+}
+
+# human_duration <seconds>  -- a coarse, operator-readable age. Precision beyond
+# the largest unit is noise when the point is "was this device here before".
+human_duration () {
+	local s=$1
+	if   [ "$s" -lt 5400 ]; then echo "about an hour ago"
+	elif [ "$s" -lt 86400 ]; then echo "$(( (s + 1800) / 3600 )) hours ago"
+	elif [ "$s" -lt 172800 ]; then echo "yesterday"
+	else echo "$(( (s + 43200) / 86400 )) days ago"
+	fi
 }
 
 # display_inrange [seconds]
@@ -149,42 +193,65 @@ display_inrange () {
 	cutoff=$(date +%s --date="$window sec ago")
 
 	local id alias conf vendor rssi pnl rarity names household employer \
-	      lang market places airports travel eatery rare macs
+	      lang market places airports travel eatery rare cracked macs last_prior
 	local shown=0
 
 	while IFS=$'\037' read -r id alias conf vendor rssi pnl rarity names household \
-	                          employer lang market places airports travel eatery rare macs; do
+	                          employer lang market places airports travel eatery rare cracked macs last_prior; do
 		[ -z "$id" ] && continue
 		shown=$((shown + 1))
 
-		printf '%s  [%s]' "$alias" "$(rssi_range "$rssi")"
-		[ -n "$vendor" ] && printf '  %s' "$vendor"
+		# --- DEVICE line first ------------------------------------------------
+		# The header is the DEVICE, not the subject. An earlier version led with
+		# the person, but a perceived human identity is the exception -- most
+		# devices never reveal a name -- whereas the fingerprint alias is always
+		# present. Leading with the thing that is reliably there, and letting the
+		# human identity follow as a SUBJECT section when there is one, reads
+		# better in a room full of anonymous devices.
+		printf '=== %s' "$alias"
+		[ -n "$vendor" ] && printf ' [%s]' "$vendor"
+		printf '   [%s]' "$(rssi_range "$rssi")"
+		[ "${last_prior:--1}" -ge 0 ] 2>/dev/null && printf '   SEEN BEFORE: %s' "$(human_duration "$last_prior")"
 		printf '\n'
 
-		# A low-confidence device spans several IE signatures, which one physical
-		# device cannot do. Everything below it is then a blend of two people's
-		# networks, so the warning has to come before the profile, not after.
+		# A low-confidence device is two people's networks blended into one
+		# dossier, so the warning has to precede the profile an operator reads
+		# top-down.
 		case "$conf" in
-			low)     printf '  !! UNRELIABLE: this fingerprint spans several devices -- treat the profile as mixed\n' ;;
-			unknown) printf '  (unverified: no IE data to corroborate)\n' ;;
+			low)     printf '  !! UNRELIABLE: this fingerprint spans several devices -- profile may be two people\n' ;;
+			unknown) printf '  (unverified: no IE data to corroborate this grouping)\n' ;;
 		esac
-		[ "${macs:-1}" -gt 1 ] 2>/dev/null && printf '  seen under %s rotating addresses\n' "$macs"
+		[ "${macs:-1}" -gt 1 ] 2>/dev/null && printf '  Fingerprint  : %s rotating MACs\n' "$macs"
+		# pnl_rarity is how identifying the whole list is: high means this person
+		# could be singled out of a large crowd by their networks alone.
+		printf '  Preferred nets: %s, identifiability %s\n' "$pnl" "$rarity"
+		[ -n "$cracked" ]   && printf '  Soft target  : %s (password known)\n' "$cracked"
+
+		# --- SUBJECT: what is known about the person, if anything -------------
+		# Named only when at least one human trait is present, so an anonymous
+		# device does not sprout an empty "SUBJECT: Unidentified" header.
+		local subject
+		if   [ -n "$names" ]; then subject="$names"
+		elif [ -n "$household" ]; then subject="$household (household)"
+		elif [ -n "$employer" ]; then subject="$employer (workplace)"
+		else subject=""
+		fi
+		[ -n "$subject" ] && printf '  SUBJECT     : %s\n' "$subject"
 
 		[ -n "$names" ]     && printf '  Name        : %s\n' "$names"
-		[ -n "$household" ] && printf '  Household   : %s\n' "$household"
-		[ -n "$employer" ]  && printf '  Employer    : %s\n' "$employer"
-		[ -n "$lang" ]      && printf '  Language    : %s\n' "$lang"
-		[ -n "$market" ]    && printf '  Home ISP    : %s\n' "$market"
-		[ -n "$places" ]    && printf '  Places      : %s\n' "$places"
-		[ -n "$airports" ]  && printf '  Airports    : %s\n' "$airports"
-		[ -n "$travel" ]    && printf '  Hotels/tvl  : %s\n' "$travel"
-		[ -n "$eatery" ]    && printf '  Eateries    : %s\n' "$eatery"
-		[ -n "$rare" ]      && printf '  Rare nets   : %s\n' "$rare"
-
-		# pnl_rarity is how identifying the whole list is. A high score means
-		# this person could be picked out of a large population by their
-		# networks alone.
-		printf '  %s networks, identifiability %s\n\n' "$pnl" "$rarity"
+		[ -n "$household" ] && printf '  Household    : %s\n' "$household"
+		[ -n "$employer" ]  && printf '  Employer     : %s\n' "$employer"
+		[ -n "$lang" ]      && printf '  Language     : %s\n' "$lang"
+		[ -n "$market" ]    && printf '  Home region  : %s\n' "$market"
+		# Everywhere the network list places them, merged under one heading --
+		# an operator wants "where does this person go", not four label variants.
+		local frequents="" f
+		for f in "$places" "$travel" "$eatery" "$airports"; do
+			[ -n "$f" ] && frequents="${frequents:+$frequents; }$f"
+		done
+		[ -n "$frequents" ] && printf '  Frequents    : %s\n' "$frequents"
+		[ -n "$rare" ]      && printf '  Notable nets : %s\n' "$rare"
+		printf '\n'
 	done <<< "$(device_profile_rows "$cutoff")"
 
 	# Everything above is keyed on devices, so a frame whose device_id is still
@@ -200,8 +267,11 @@ display_inrange () {
 	local raw=0
 	display_ungrouped "$cutoff" && raw=1
 
+	# The window length is an implementation detail the operator does not care
+	# about -- "the last 30s" reads as a bug when they have been staring at it
+	# for three. Just state that the air is empty.
 	[ "$shown" -eq 0 ] && [ "$raw" -eq 0 ] && \
-		echo "(nothing heard in the last ${window}s -- is capture running?)"
+		echo "Zero Signals Observed"
 }
 
 # display_ungrouped <cutoff_epoch>

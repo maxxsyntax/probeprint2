@@ -373,8 +373,9 @@ Roughly in descending order of value for this engagement:
    Correlate by co-presence window, RSSI correlation and joint
    appear/disappear. BLE frequently carries a real human name where Wi-Fi does
    not.
-3. **Multi-node trilateration** — `client/` already deploys three capture nodes
-   writing to one database. The capability is latent and unused.
+3. **Multi-node trilateration** — the `client/` tree that deployed three capture
+   nodes into one database was deleted in Aug 2026; recover it from git history to
+   revive this. The Pi-side glue survives as `capture-scripts/pi/`.
 4. **Timing and behavioral signal** — inter-burst interval, frames per burst,
    channel rotation order are all driver and chipset specific. Pintor's six
    modes show probe rate changes with screen state, which makes it an
@@ -437,9 +438,11 @@ Three consequences for this pipeline:
   "not in range" may mean "not captured". A completeness figure is what lets
   either be qualified rather than asserted.
 - **Merged traces are the mitigation, and are also what they studied.** Multiple
-  monitors improve completeness non-uniformly. `client/` already writes several
-  capture nodes into one database, which makes this measurable rather than
-  assumed. Channel coverage is the same argument one level up: a single-radio
+  monitors improve completeness non-uniformly. The `client/` tree that wrote
+  several capture nodes into one database was deleted in Aug 2026 and is
+  recoverable from git history; reviving it is what would make this measurable
+  here rather than assumed. Channel coverage is the same argument one level up:
+  a single-radio
   capture on one band cannot see probes sent on another, and that is a gap no
   amount of enrichment recovers.
 

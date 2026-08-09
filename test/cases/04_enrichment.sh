@@ -48,9 +48,52 @@ assert_contains "AMS Airport Free matched the AMS IATA code" "Amsterdam" \
     "$(sq1 "select is_airport from ssid_intel where ssid_hex=lower(hex('AMS Airport Free'));")"
 
 # --- check_name ----------------------------------------------------------
+# Two possessive forms and an uppercase one: the marker used to be a byte-exact
+# lowercase "'s " match, so "ADRIANA'S NETWORK" (uppercase S) and any SSID
+# ending in the possessive went untagged. It is a case-insensitive regexp now.
+mysql probeprint -e "insert ignore into ssid_intel (ssid_hex) values
+  (lower(hex('ADRIANA''S NETWORK'))), (lower(hex('Priya''s')));"
 ./analysis-scripts/name.sh >/tmp/name.log 2>&1
 assert_contains "Adam's iPhone yields a name" "Adam" \
     "$(sq1 "select is_name from ssid_intel where ssid_hex=lower(hex('Adam''s iPhone'));")"
+assert_eq "an uppercase possessive is tagged" "ADRIANA" \
+    "$(sq1 "select is_name from ssid_intel where ssid_hex=lower(hex('ADRIANA''S NETWORK'));")"
+assert_eq "a possessive at end of SSID is tagged" "Priya" \
+    "$(sq1 "select is_name from ssid_intel where ssid_hex=lower(hex('Priya''s'));")"
+
+# A name is a whole token, not a substring. Short names inside ordinary words
+# once tagged unrelated networks -- "Al" matching "Portal" -- and wrote the
+# fragment into is_name as though it were a person.
+mysql probeprint -e "insert ignore into ssid_intel (ssid_hex) values
+  (lower(hex('Portal'))), (lower(hex('Guest Network'))), (lower(hex('Marias iPhone')));"
+./analysis-scripts/name.sh >/dev/null 2>&1
+assert_eq "a name inside a longer word is not a name" "0" \
+    "$(sq1 "select is_name from ssid_intel where ssid_hex=lower(hex('Portal'));")"
+assert_eq "a lowercase common word is not a name" "0" \
+    "$(sq1 "select is_name from ssid_intel where ssid_hex=lower(hex('Guest Network'));")"
+assert_contains "a possessive without an apostrophe still resolves" "Maria" \
+    "$(sq1 "select is_name from ssid_intel where ssid_hex=lower(hex('Marias iPhone'));")"
+
+# The pass must survive being re-run, which is how it is normally used.
+#
+# `0` is the "looked, found no name" sentinel, and it is a string in a varchar
+# column -- so `is_name != ''` is TRUE for it. On the second run every row the
+# pass had already rejected was categorized as NAME. One run looked right; the
+# re-run swallowed the corpus.
+./analysis-scripts/name.sh >/dev/null 2>&1
+./analysis-scripts/name.sh >/dev/null 2>&1
+assert_eq "re-running does not categorize the no-name sentinel as NAME" "0" \
+    "$(sq1 "select count(*) from ssid_intel where category='NAME' and is_name='0';")"
+assert_eq "and a row with no name keeps its sentinel" "0" \
+    "$(sq1 "select is_name from ssid_intel where ssid_hex=lower(hex('Portal'));")"
+
+# NAME is a weak classification -- one capitalized token -- and must not
+# overwrite a category derived from stronger evidence.
+mysql probeprint -e "update ssid_intel set category='BIZ_EATERY', is_name=null
+                      where ssid_hex=lower(hex('Marias iPhone'));"
+./analysis-scripts/name.sh >/dev/null 2>&1
+assert_eq "NAME does not overwrite a category another pass decided" "BIZ_EATERY" \
+    "$(sq1 "select category from ssid_intel where ssid_hex=lower(hex('Marias iPhone'));")"
 
 # --- check_common --------------------------------------------------------
 ./analysis-scripts/common.sh >/tmp/common.log 2>&1

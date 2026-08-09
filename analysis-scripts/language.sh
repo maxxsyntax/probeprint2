@@ -6,9 +6,9 @@
 # characters. See language_functions.sh for why the rules are strict.
 #
 # Usage:
-#   ./analysis-scripts/slow_language.sh              classify rows with no language yet
-#   ./analysis-scripts/slow_language.sh --recompute  reclassify everything
-#   ./analysis-scripts/slow_language.sh --report     what was found, and what script
+#   ./analysis-scripts/language.sh              classify rows with no language yet
+#   ./analysis-scripts/language.sh --recompute  reclassify everything
+#   ./analysis-scripts/language.sh --report     what was found, and what script
 #                                         detection found for comparison
 [ -f .env ] && source .env
 source ./analysis-scripts/language_functions.sh

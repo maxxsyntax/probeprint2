@@ -48,7 +48,7 @@ mac2vendor
 #     ./analysis-scripts/common.sh
 #     ./analysis-scripts/name.sh
 #     ./analysis-scripts/oneloc.sh
-#     ./analysis-scripts/slow_summarize_loc.sh
+#     ./analysis-scripts/summarize_loc.sh
 #     sleep 20
 #done
 

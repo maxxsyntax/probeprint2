@@ -103,7 +103,7 @@ run_pass () {
 PASSES_CLASSIFY="ssid2ssid_intel.sh
 categorize.sh
 recategorize.sh
-slow_language.sh
+language.sh
 name.sh
 airport.sh
 address.sh
@@ -111,9 +111,10 @@ fqdn.sh
 industry.sh"
 
 PASSES_ENRICH="mac2vendor.sh
-rarity.sh"
+rarity.sh
+cracked.sh"
 
-PASSES_LOCATE="slow_summarize_loc.sh
+PASSES_LOCATE="summarize_loc.sh
 geolocate.sh
 oneloc.sh"
 
@@ -145,10 +146,11 @@ run_pass mac2vendor.sh
 # rarity takes --recompute; --reload additionally rebuilds ssid_freq from
 # lists/ssid.csv, which is only needed when that list is re-downloaded.
 run_pass rarity.sh $RECOMPUTE
+run_pass cracked.sh $RECOMPUTE
 
 echo
 echo "-- location (offline, from the WiGLE cache) ----------------------"
-run_pass slow_summarize_loc.sh
+run_pass summarize_loc.sh
 run_pass geolocate.sh $RECOMPUTE
 run_pass oneloc.sh $RECOMPUTE
 

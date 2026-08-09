@@ -46,7 +46,12 @@ check_language_words () {
 	done < lists/lang_words.txt
 	echo "  loaded ${#LW_LANG[@]} language markers"
 
-	local ssid_hex ssid tok toks
+	# Anything that is not a lowercase letter, a digit, or part of a UTF-8
+	# multibyte sequence. Built once; see the tokenizer below for why it is a
+	# byte range rather than a character class.
+	local LW_NONWORD=$'[^a-z0-9\x80-\xff]'
+	local ssid_hex ssid tok tl
+	local -a toks
 	local hit_langs hit_scope decided decided_scope
 	local n_lang=0 n_family=0 n_amb=0 n_conflict=0 n_none=0 batch=0
 
@@ -58,12 +63,32 @@ check_language_words () {
 
 			# Whole tokens only. Splitting on non-letters means 'Redwood' never
 			# yields the token 'red'.
-			toks=$(printf '%s' "${ssid,,}" | tr -c 'a-z0-9\xc0-\xff' '\n')
+			#
+			# Pure parameter expansion, no subprocess. This was
+			# `$(printf … | tr -c 'a-z0-9\xc0-\xff' '\n')`, which forked once per
+			# SSID and dominated the pass -- measured at ~3ms of a ~4.4ms row.
+			#
+			# It was also wrong. GNU tr has no \xNN escape, so `\xc0-\xff` was
+			# read as the literal characters x, c, 0, -, f: the high bytes were
+			# never in the keep-set, and every accented word split apart --
+			# "gäste" became "g" and "ste". All 24 accented entries in
+			# lists/lang_words.txt could therefore never match.
+			#
+			# The keep-set is a BYTE range, not [:alnum:]. Character classes are
+			# locale-dependent -- [:alnum:] matches accented characters under a
+			# UTF-8 locale and splits them under C, so the pass would behave
+			# differently on a developer's shell and in the test container, which
+			# has no locale set. Every byte of a UTF-8 multibyte sequence is
+			# >= 0x80, so keeping that range keeps whole characters wherever it
+			# runs. $LW_NONWORD is built once, outside the loop.
+			tl=${ssid,,}
+			tl=${tl//$LW_NONWORD/ }
+			read -r -a toks <<< "$tl"
 
 			decided=""; decided_scope=""; hit_langs=""; hit_scope=""
 			local conflict=0 amb_only=0
 
-			while IFS= read -r tok; do
+			for tok in "${toks[@]}"; do
 				[ -z "$tok" ] && continue
 				langs=${LW_LANG[$tok]:-}
 				[ -z "$langs" ] && continue
@@ -90,7 +115,7 @@ check_language_words () {
 						fi
 						;;
 				esac
-			done <<< "$toks"
+			done
 
 			if [ "$conflict" = "1" ]; then
 				n_conflict=$((n_conflict+1)); continue
@@ -125,7 +150,13 @@ check_language_words () {
 
 			batch=$((batch+1))
 			[ $((batch % 500)) -eq 0 ] && { echo "commit;"; echo "start transaction;"; }
-		done <<< "$(mysql -N probeprint <<< "
+		# --default-character-set=utf8mb4 is load-bearing. Without it the client
+		# negotiates latin1 and the server transcodes the result, so an SSID
+		# stored as UTF-8 "gäste" (c3 a4) arrives as latin1 (e4) -- which never
+		# matches lists/lang_words.txt, a UTF-8 file. Every accented marker
+		# silently failed. This was invisible while the tokenizer was also
+		# splitting accented words apart; fixing that exposed it.
+		done <<< "$(mysql -N --default-character-set=utf8mb4 probeprint <<< "
 			select concat_ws('|', ssid_hex,
 			                 replace(replace(unhex(ssid_hex), '\n', ' '), '\r', ' '))
 			  from ssid_intel
@@ -165,4 +196,25 @@ select category, count(*)
  where category like 'CULTURE_%'
  group by category order by count(*) desc limit 20;
 SQL
+}
+
+# --- script detection, by UTF-8 byte range ------------------------------
+# Complements check_language_words above. This sees Cyrillic, Arabic, Hebrew,
+# Kana, Hangul, Greek and emoji, and is blind to every language written in
+# Latin script -- which is precisely what the vocabulary list does see.
+check_language () {
+
+	#https://www.loc.gov/marc/specifications/specchareacc/KoreanHangul.html
+#	#'%e38[1,2,3]%' - japanese#
+
+#sqlite3 new.db "update ssid_intel set category=CULTURE_LANGUAGE where category ssid_hex like 'e%';"
+mysql probeprint <<< "update ssid_intel set category='CULTURE_JAPANESE' where (ssid_hex like '%e381%' or ssid_hex like '%e382%' or ssid_hex like '%e383%') and ssid_hex like 'e%';"
+mysql probeprint <<< "update ssid_intel set category='CULTURE_KOREAN' where (ssid_hex like '%e384%' or ssid_hex like '%e385%' or ssid_hex like '%eab%'  or ssid_hex like '%eb8%'  or ssid_hex like 'ec%'  or ssid_hex like '%ead%') and ssid_hex like 'e%';"
+mysql probeprint <<< "update ssid_intel set category='CULTURE_ARABIC' where ssid_hex like 'd98%' or ssid_hex like 'd89%' or ssid_hex like 'd8a%' or ssid_hex like 'd8b%' or ssid_hex like 'daa%' or ssid_hex like 'dab%' or ssid_hex like 'dbb%' ;"
+mysql probeprint <<< "update ssid_intel set category='CULTURE_HEBREW' where ssid_hex like 'd6%' or ssid_hex like 'd7%' ;"
+mysql probeprint <<< "update ssid_intel set category='CULTURE_CRYLIC' where ssid_hex like 'd1%' or ssid_hex like 'd0%' or ssid_hex like 'd2%';"
+mysql probeprint <<< "update ssid_intel set category='CULTURE_KANJI' where ssid_hex like 'e4%' or ssid_hex like 'e5%' or ssid_hex like 'e6%' or ssid_hex like 'e7%' or ssid_hex like 'e8%' or ssid_hex like 'e9%';"
+mysql probeprint <<< "update ssid_intel set category='CULTURE_GREEK' where ssid_hex like 'cc%' or ssid_hex like 'cd%' or ssid_hex like 'ce%'  or ssid_hex like 'cd%' or ssid_hex like 'ce%' or ssid_hex like 'cf%' ;"
+mysql probeprint <<< "update ssid_intel set category='CULTURE_EMOJI' where ssid_hex like '%efb88f%' or ssid_hex like 'f09f%' or ssid_hex like 'e29%' ;"
+
 }

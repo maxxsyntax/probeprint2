@@ -87,6 +87,18 @@ recategorize_unknown () {
 	done < lists/cpe_isp.txt
 	echo "  loaded ${#CPE_KW[@]} CPE brand keywords"
 
+	# One alternation of every brand, used purely to reject. Most SSIDs contain
+	# no operator brand at all, and testing all 101 keywords individually against
+	# each of them was the dominant cost of this pass -- ~3.5M glob comparisons
+	# on a real collection. A single regex answers "any brand at all?" in one
+	# test, and only the survivors pay for the loop that identifies WHICH.
+	#
+	# Safe to build by concatenation because every keyword in lists/cpe_isp.txt
+	# is a plain literal -- checked, none contains a regex metacharacter. Add one
+	# that does and this must start escaping them.
+	local CPE_ANY="" _k
+	for _k in "${CPE_KW[@]}"; do CPE_ANY="${CPE_ANY:+$CPE_ANY|}$_k"; done
+
 	local ssid_hex ssid lower i cat isp_hit cc_hit sc_hit
 	local n_cpe_brand=0 n_cpe_shape=0 n_guest=0 n_iot=0 n_numeric=0 n_left=0 batch=0
 	local n_org=0 n_house=0 n_netname=0
@@ -104,14 +116,21 @@ recategorize_unknown () {
 			cat=""; isp_hit=""; cc_hit=""; sc_hit=""
 
 			# 1. A known operator brand is the most informative answer.
-			for i in "${!CPE_KW[@]}"; do
-				case "$lower" in
-					*"${CPE_KW[$i]}"*)
-						cat="TECH_CPE"
-						isp_hit=${CPE_ISP[$i]}; cc_hit=${CPE_CC[$i]}; sc_hit=${CPE_SCOPE[$i]}
-						break ;;
-				esac
-			done
+			#
+			# Reject first with one alternation, then identify with the loop.
+			# The loop still runs in list order so the first matching keyword
+			# wins exactly as before -- this only skips it for the SSIDs that
+			# cannot match any keyword, which is the large majority.
+			if [[ "$lower" =~ $CPE_ANY ]]; then
+				for i in "${!CPE_KW[@]}"; do
+					case "$lower" in
+						*"${CPE_KW[$i]}"*)
+							cat="TECH_CPE"
+							isp_hit=${CPE_ISP[$i]}; cc_hit=${CPE_CC[$i]}; sc_hit=${CPE_SCOPE[$i]}
+							break ;;
+					esac
+				done
+			fi
 			[ -n "$cat" ] && n_cpe_brand=$((n_cpe_brand+1))
 
 			# 2. Otherwise, does it have the shape of a router default?

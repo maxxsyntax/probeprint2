@@ -43,7 +43,10 @@ source ./display-scripts/display_functions.sh
 DISPLAY_DB_ARGS=${DISPLAY_DB_ARGS:--u pi -h 127.0.0.1}
 
 WINDOW=${DISPLAY_WINDOW:-30}
-REFRESH=${DISPLAY_REFRESH:-5}
+# A beat slower than it was (5s): the dossier is a lot to read in a moving room,
+# and a redraw that arrives before you have finished reading is worse than one
+# that waits. Override with DISPLAY_REFRESH.
+REFRESH=${DISPLAY_REFRESH:-6}
 
 usage () {
 	cat >&2 <<EOF

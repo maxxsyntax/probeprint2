@@ -39,10 +39,13 @@ Every script resolves `.env`, `lists/` and `locs/` relatively, so `cd` into
 mkdir -p locs                # WiGLE response cache, gitignored
 
 # capture (interface must already be in monitor mode)
-./capture-scripts/build_ssid.sh
+./capture.sh                   # preflight, then live capture (Ctrl-C to stop)
+./capture.sh --check           # verify the rig without capturing
+./capture.sh --status          # what has arrived, and is anything arriving
 
 # backfill from saved captures instead
-./capture-scripts/pcap2db.sh capture1.pcap capture2.pcap
+./capture.sh --pcap capture1.pcap capture2.pcap
+./capture.sh --pcap-dir ../wifi_research/caps
 
 # enrichment: every pass, in dependency order -- the normal way to run them
 ./analysis.sh                 # incremental; skips rows already enriched
@@ -54,7 +57,7 @@ mkdir -p locs                # WiGLE response cache, gitignored
 ./analysis-scripts/name.sh
 ./analysis-scripts/airport.sh
 ./analysis-scripts/rarity.sh
-./analysis-scripts/slow_summarize_loc.sh
+./analysis-scripts/summarize_loc.sh
 
 # grouping
 ./analysis-scripts/bursts.sh            # SSID sets per burst
@@ -97,7 +100,7 @@ written by the pre-2025 ingest parser (see *Ingest* below).
 | Variable | Meaning |
 |---|---|
 | `APIKEY` | WiGLE credentials as `user:pass`, for `curl -u` |
-| `INF` | Monitor-mode interface name |
+| `INF` | Monitor-mode interface(s). A whitespace-separated list, each `iface` or `iface:channel`, so several radios can cover several channels at once |
 | `online` | `1` enables live WiGLE lookups in `build_ssid.sh`; anything else skips them |
 
 Optional: engagement-specific `categories["INDUSTRY_ORG"]`, `["INDUSTRY_VIP"]`,
@@ -242,10 +245,11 @@ Three modules, matching the three in `idea.txt`: **capture**, **analysis**,
 directory beside it.
 
 ```
-capture.sh            not yet written -- see "Still to do" below
+capture.sh            live capture, pcap backfill, preflight and status
 analysis.sh           every enrichment pass in dependency order
 display.sh            the operator view
 build_dbs.sh          schema of record; used by all three
+probeprint.cap        bettercap caplet -- configuration, NOT a packet capture
 
 capture-scripts/      the parse-and-insert path, plus the Pi deployment glue
 analysis-scripts/     enrichment passes and the libraries they share
@@ -256,6 +260,13 @@ display-scripts/      the operator view's queries
 resolve relative to the working directory, not to the script, so
 `./analysis-scripts/categorize.sh` works and `cd analysis-scripts && ./categorize.sh`
 does not.
+
+`probeprint.cap` is a **bettercap caplet** despite the extension — a config file
+that turns on `wifi.recon` and `ble.recon` and filters the event stream. It is
+tracked deliberately and holds no captured data. Install it to
+`/usr/local/share/bettercap/caplets/` on Debian or `/usr/share/bettercap/caplets/`
+on Kali. It is an alternative capture front end, separate from `capture.sh`,
+and nothing in this pipeline reads it.
 
 Sourced libraries have no exec bit; anything runnable does.
 `capture-scripts/pi/start_cap.sh` invokes `build_ssid.sh` by absolute path, so
@@ -289,7 +300,14 @@ cache.
 ### analysis-scripts/
 
 Shared libraries:
-
+| `ssid_intel_functions.sh` | Aggregator: sources every concern below, for callers wanting the whole set. A single-pass wrapper should source its own concern instead. |
+| `categorize_functions.sh` | The `categories` keyword table, `categorize`, `check_anomalies`. Declares the table before sourcing `.env`, which is what lets an engagement add its own `INDUSTRY_*` lists |
+| `ssid_intel_rows_functions.sh` | `ssid2ssid_intel` — one row per distinct SSID; every null-driven pass depends on it |
+| `common_functions.sh` | `check_common`, `make_ignore_list` — which SSIDs are too widespread to identify anyone |
+| `name_functions.sh` | `check_name` — personal and family names in SSIDs |
+| `airport_functions.sh` | `check_airport` — IATA codes |
+| `fqdn_functions.sh` | `check_fqdn` — SSIDs that are domain names |
+| `address_functions.sh` | `check_address` — street-address-shaped SSIDs (this is what fills `LOCATION_SPECIFIC`) |
 | File | Role |
 |---|---|
 | `ssid_intel_functions.sh` | **The monolith.** `categorize`, `check_name`, `check_airport`, `check_common`, `check_fqdn`, `check_address`, `check_language`, `check_anomalies`, `make_ignore_list`. Still to be split — see below. |
@@ -306,8 +324,8 @@ Shared libraries:
 | `industry_functions.sh` | `check_industry` — engagement-specific `INDUSTRY_*` lists |
 
 Passes, in the order `analysis.sh` runs them: `ssid2ssid_intel`, `categorize`,
-`recategorize`, `slow_language`, `name`, `airport`, `address`, `fqdn`,
-`industry`, `mac2vendor`, `rarity`, `slow_summarize_loc`, `geolocate`, `oneloc`,
+`recategorize`, `language`, `name`, `airport`, `address`, `fqdn`,
+`industry`, `mac2vendor`, `rarity`, `summarize_loc`, `geolocate`, `oneloc`,
 `seqgraph`.
 
 Outside that batch: `common`, `make_ignore`, `bursts`, `ssid_intel`,
@@ -323,16 +341,10 @@ Outside that batch: `common`, `make_ignore`, `bursts`, `ssid_intel`,
 
 ### Still to do
 
-- **`capture.sh` does not exist.** Capture is still started by calling
-  `capture-scripts/build_ssid.sh` or `pcap2db.sh` directly. The other two
-  modules have their entry point; this one does not yet.
-- **`ssid_intel_functions.sh` is still monolithic.** Roughly a dozen unrelated
-  enrichment passes in one file, which `idea.txt` asks to be split per concern.
-  Its `categories` keyword table is also duplicated verbatim in
-  `analysis-scripts/categorize.sh` — edit both or they drift. They have drifted
-  before: one wrote `category='LOCATION'` while the other wrote
-  `'LOCATION_VAGUE'`. Splitting the file is the natural moment to collapse that
-  duplication.
+- **`check_name` matches substrings.** 85 lines, the largest pass by some way,
+  and it still finds short names anywhere inside an SSID. Now that it is on its
+  own in `name_functions.sh` it can be fixed without touching anything else.
+
 
 ## External services
 

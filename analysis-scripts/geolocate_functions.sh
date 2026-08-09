@@ -630,3 +630,22 @@ select substr(unhex(ssid_hex),1,34),
  limit 40;
 SQL
 }
+
+check_oneloc () {
+	#set -x
+	# The body of this pass now lives in geolocate_functions.sh as
+	# derive_is_oneloc, sourced at the top of this file, so the two generations
+	# of the codebase cannot drift apart on it.
+	#
+	# It used to grep the cached WiGLE body for `"totalResults": 1`. That number
+	# counts case-INSENSITIVE matches, so "MyNet" and "mynet" -- different
+	# networks, different owners, different cities -- inflated it together, and
+	# the flag was wrong for most of its positives in both directions. It is now
+	# derived from geo_match_count, which counts results matching the probed
+	# SSID byte-for-byte.
+	#
+	# The old "AMBIGUOUS_LOC" placeholder is gone with it: a row can only reach
+	# is_oneloc=1 by having a resolved coordinate, so there is nothing ambiguous
+	# left to mark.
+	derive_is_oneloc "$@"
+}

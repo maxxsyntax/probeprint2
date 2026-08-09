@@ -16,7 +16,7 @@
 # retroactive sweep remove_empty_locs() in ssid_intel_functions.sh delegates here
 # too, so the logic lives once.
 wigle_purge_quota_files () {
-	grep -l 'oo many' locs/*.location 2>/dev/null | while read -r f; do
+	grep -l 'oo many' "${GEO_LOCS_DIR:-locs}"/*.location 2>/dev/null | while read -r f; do
 		rm -f "$f"
 	done
 }
@@ -42,10 +42,10 @@ wigle_fetch () {
 	local ssid_hex=$1
 	local on_quota=${2:-stop}
 	local ssid ssid_uri file
-	file="locs/$ssid_hex.location"
+	file="${GEO_LOCS_DIR:-locs}/$ssid_hex.location"
 
 	[ -z "$ssid_hex" ] && return 1
-	mkdir -p locs
+	mkdir -p "${GEO_LOCS_DIR:-locs}"
 
 	while true; do
 		if [ ! -f "$file" ]; then
@@ -112,7 +112,15 @@ summarize_one () {
 	local ssid file results matches locale
 	local -a countries regions cities roads
 
-	file="locs/$ssid_hex.location"
+	# The caller may pass an already-resolved path. The bulk sweep does, from
+	# geo_cache_index, which knows all three of the cache's filename
+	# conventions -- this fallback only knows the hex one, and so misses the
+	# URI-escaped and plain-text files that make up most of a real cache.
+	#
+	# $GEO_LOCS_DIR rather than a hardcoded `locs/`: geolocate.sh has always
+	# honored it, and a hardcoded path meant the two passes could disagree about
+	# where the cache is and reach opposite conclusions about the same SSID.
+	file=${2:-${GEO_LOCS_DIR:-locs}/$ssid_hex.location}
 	ssid=$(printf '%s' "$ssid_hex" | xxd -r -p 2>/dev/null)
 
 	if [ ! -f "$file" ]; then
@@ -177,4 +185,97 @@ summarize_one () {
 	mysql probeprint <<< "UPDATE ssid_intel SET location='${locale}' WHERE ssid_hex='$ssid_hex';"
 
 	echo "$ssid_hex -> $locale"
+}
+
+remove_empty_locs () {
+	# Retroactively drop quota-exhaustion bodies so those SSIDs retry next run.
+	# Single source of the cleanup, shared via location_functions.sh.
+	wigle_purge_quota_files
+}
+
+# summarize_batch  -- stdin: <ssid_hex>|<file> per line
+#
+# The bulk equivalent of summarize_one. Same verdicts, same precedence, but one
+# jq per file instead of six, and the writes batched instead of one `mysql` per
+# SSID.
+#
+# summarize_one is deliberately left alone: online_wigle_fetch.sh calls it one
+# SSID at a time as it fetches, where batching buys nothing, and it is the
+# function the tests pin the verdict rules against. This is an additional path,
+# not a replacement, and it is checked against summarize_one on a real corpus.
+#
+# Why one jq: the per-row form ran jq for totalResults, again for the matching
+# results, then four more times for country/region/city/road -- six process
+# spawns to read one file. A single program computes the whole verdict.
+summarize_batch () {
+	local sqlf; sqlf=$(mktemp)
+	local ssid_hex file ssid verdict
+	local n_loc=0 n_none=0 n_many=0 n_nomatch=0 n_quota=0
+
+	echo "start transaction;" > "$sqlf"
+	while IFS='|' read -r ssid_hex file; do
+		[ -z "$ssid_hex" ] && continue
+		# A null byte cannot survive command substitution -- bash drops it and
+		# warns -- so the decoded string would be a DIFFERENT SSID than the one
+		# probed for. Refuse rather than compare the wrong name.
+		case "$ssid_hex" in *00*) continue ;; esac
+		ssid=$(printf '%s' "$ssid_hex" | xxd -r -p 2>/dev/null)
+
+		# A quota-exhausted body is not a result and must not be recorded as
+		# one; it is a file that should be refetched later.
+		if grep -q 'oo many' "$file" 2>/dev/null; then
+			n_quota=$((n_quota + 1)); continue
+		fi
+
+		verdict=$(jq -r --arg s "$ssid" '
+			def clean: map(select(. != null and . != "")) | unique;
+			if (.totalResults // null) == null then "E|no results"
+			elif .totalResults < 1   then "E|no results"
+			elif .totalResults > 100 then "E|too many results"
+			else
+			  ([.results[]? | select(.ssid == $s)]) as $m
+			  | if ($m | length) == 0 then "E|no match for ssid"
+			    else
+			      ([$m[].country] | clean) as $c
+			      | ([$m[].region] | clean) as $r
+			      | ([$m[].city]   | clean) as $ci
+			      | ([$m[].road]   | clean) as $ro
+			      | "L|" +
+			        (if   ($c|length) == 1 and ($r|length) == 1 and ($ci|length) == 1
+			         then ($r[0] + " " + $ci[0] + (if ($ro|length) > 0 then " " + ($ro|join(" ")) else "" end))
+			         elif ($c|length) == 1 and ($r|length) == 1
+			         then ($r[0] + " (" + (($ci|length)|tostring) + " cities)")
+			         elif ($c|length) == 1
+			         then ($c[0] + " (" + (($r|length)|tostring) + " regions)")
+			         else ((($c|length))|tostring) + " countries"
+			         end)
+			    end
+			end' "$file" 2>/dev/null)
+
+		[ -z "$verdict" ] && verdict="E|no results"
+
+		# location is varchar(64) -- trim rather than let MariaDB truncate with
+		# a warning. Double any quote for the SQL literal.
+		local val=${verdict#*|}
+		val=${val//\"/}
+		val=${val:0:64}
+		val=${val//\'/\'\'}
+		printf "update ssid_intel set location='%s' where ssid_hex='%s';\n" "$val" "$ssid_hex" >> "$sqlf"
+
+		case "$verdict" in
+			L\|*) n_loc=$((n_loc + 1)) ;;
+			"E|no results")       n_none=$((n_none + 1)) ;;
+			"E|too many results") n_many=$((n_many + 1)) ;;
+			*)                    n_nomatch=$((n_nomatch + 1)) ;;
+		esac
+	done
+	echo "commit;" >> "$sqlf"
+	mysql probeprint < "$sqlf"
+	rm -f "$sqlf"
+
+	echo "  resolved to a place   : $n_loc"
+	echo "  no results in the body: $n_none"
+	echo "  too widespread to use : $n_many"
+	echo "  no exact SSID match   : $n_nomatch"
+	echo "  quota body, not summarized: $n_quota"
 }

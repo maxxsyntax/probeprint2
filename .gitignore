@@ -11,6 +11,8 @@ pipe
 industry.txt
 ignore.txt
 notes.txt
-test/out/
+test/out/*
 test/fixtures/*.pcap
-logs/
+logs/*
+todo.txt
+lists/cracked.txt

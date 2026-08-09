@@ -5,5 +5,5 @@
 # The previous version defined the function but never called it (and had no
 # shebang), so running it populated nothing -- ssid_intel stayed empty and every
 # later pass had no rows to work on.
-source ./analysis-scripts/ssid_intel_functions.sh
+source ./analysis-scripts/ssid_intel_rows_functions.sh
 ssid2ssid_intel

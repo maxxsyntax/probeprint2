@@ -38,6 +38,7 @@ If the daemon is not running: `sudo systemctl start docker`.
 | `16_oneloc` | `is_oneloc` derived from `geo_match_count` rather than WiGLE's case-insensitive `totalResults`, wrong in both directions; refusal when geolocation has not run; unscored rows undetermined rather than false |
 | `17_places` | Google Places name lookup: exact match after normalizing router decoration, near-miss names refused, chain names left unplaced, SSIDs WiGLE already placed never queried, refusal without a key, `--dry-run` sends nothing |
 | `18_fidelity` | Capture completeness from sequence numbers: known-hole fixtures, 12-bit counter wrap, retransmissions excluded, idle gaps and delta-too-large reported separately, channel-coverage warning, and that the pass writes nothing |
+| `19_capture` | The capture entry point: pcap backfill through the same ingest as live capture, `--pcap-dir`, status telling quiet apart from not-running, preflight refusing an unset or missing interface, and that neither `--check` nor `--status` writes |
 
 ## Rules
 

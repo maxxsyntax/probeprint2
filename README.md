@@ -69,9 +69,10 @@ Run everything from the repo root.
 ./build_dbs.sh
 
 # 2a. live capture (interface must already be in monitor mode)
-./capture-scripts/build_ssid.sh
+./capture.sh                     # preflight, then live capture
 # 2b. or backfill from saved captures instead
-./capture-scripts/pcap2db.sh capture1.pcap capture2.pcap
+./capture.sh --pcap capture1.pcap capture2.pcap
+./capture.sh --pcap-dir ../wifi_research/caps
 
 # 3. enrich everything captured so far -- offline, incremental, safe to re-run
 ./analysis.sh
@@ -92,6 +93,60 @@ Run everything from the repo root.
 ```
 
 
+
+## Reading the display
+
+Each device in range is one dossier block, headed by the device fingerprint --
+that is the thing always present -- with the person's identity below it, on a
+`SUBJECT` line and the fields under it, when the network list reveals one.
+
+```
+=== Brave Falcon [Apple]   [near by]   SEEN BEFORE: 3 days ago
+  Fingerprint  : 3 rotating MACs
+  Preferred nets: 8, identifiability 71
+  Soft target  : Casa-Perez (password known)
+  SUBJECT     : Maria
+  Household    : Familia Perez
+  Employer     : Vertex Labs Staff
+  Language     : es
+  Home region  : Bouygues Telecom (FR)
+  Frequents    : Amsterdam Schiphol; Hotel Ibis Paris
+  Notable nets : Casa-Perez, VertexLabs-Staff
+```
+
+What each line means:
+
+| Line | Meaning |
+|---|---|
+| **header** | The device's fingerprint alias (a stable handle, not a name it broadcast), its hardware vendor, and a coarse proximity band -- **near by / medium range / far away**. RSSI is deliberately banded, never shown as a false-precision distance; see `FINGERPRINTING.md`. |
+| **SEEN BEFORE** | This device was here on an earlier visit, at least an hour before the current one. A returning subject is a stronger lead than anything in its network list. |
+| **Fingerprint** | How many rotating MAC addresses were collapsed into this one device. "3 rotating MACs" means randomization was defeated -- three addresses proven to be one device. |
+| **Preferred nets** | The size of the preferred network list (how many distinct networks the device probes for), and its **identifiability** -- see below. |
+| **Soft target** | A network in the list whose WPA password is publicly known (`lists/cracked.txt`) *and* which is rare. It can be impersonated with the known key to lure this specific device. Shown only for rare networks: a cracked `linksys` is on thousands of devices and targets nobody. |
+| **SUBJECT** | The perceived human: a personal name probed for, else a household or workplace name standing in. Absent when nothing human is known. |
+| **Household / Employer** | Networks categorized as a residence or a workplace/institution. |
+| **Language** | Language inferred from the vocabulary of the network names (Latin script), or their script (non-Latin). Only a confident single-language match is shown. |
+| **Home region** | The operator/ISP of a device's home-network name, with the country it identifies -- a residential-origin signal. |
+| **Frequents** | Every place the network list locates the person: geocoded venues, airports, hotels and travel, eateries, merged under one heading. |
+| **Notable nets** | The device's rare networks -- the ones that most single this person out. |
+
+### Identifiability
+
+The **identifiability** score is the sum of the *rarity* of every network the
+device probes for. Rarity of one network is `-ln(f)`, where `f` is that SSID's
+share of sightings in the global reference corpus (`lists/ssid.csv`): a network
+seen everywhere scores near zero, one never seen before scores about 20.
+
+Summed across the list, it answers **how uniquely could this person be picked
+out of a crowd by their networks alone**. A device probing only `xfinitywifi`
+and `attwifi` scores near zero -- it looks like everyone. A device probing three
+household and workplace names nobody else has scores 50+ -- it is effectively a
+fingerprint. The higher the number, the more a person stands out, and the more
+the rest of the dossier can be trusted to be about one individual.
+
+This is derived directly from Cunche et al.'s finding that the *rarity* of
+shared networks, not their count, is what links devices to people; the method
+and the thresholds are in `FINGERPRINTING.md`.
 
 ## How complete is the capture?
 

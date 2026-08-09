@@ -1,1 +1,0 @@
-	grep -l 'oo many' "${GEO_LOCS_DIR:-locs}"/*.location 2>/dev/null 

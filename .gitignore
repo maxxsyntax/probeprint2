@@ -14,5 +14,7 @@ notes.txt
 test/out/*
 test/fixtures/*.pcap
 logs/*
+spool/
 todo.txt
 lists/cracked.txt
+analysis-scripts/WigleWifi_* 

@@ -4,7 +4,7 @@
 #
 # Why this exists: WiGLE can only place an SSID somebody wardrove. On a real
 # collection that is a small minority -- everything else is a name with no
-# location attached. But an SSID like "Tortillas Alizze" names a venue, and the
+# location attached. But an SSID like "Cafe Marguerite" names a venue, and the
 # venue is on the map whether or not anyone ever drove past it with a radio.
 #
 # WHICH API. Not the Geolocation API that geo_google_observer uses: that takes
@@ -15,7 +15,7 @@
 # WHAT THE ANSWER MEANS -- read this before trusting a result. WiGLE reports an
 # observation: a radio with this SSID was heard at these coordinates. Places
 # reports a venue's address, and that only becomes the device's location if the
-# SSID really is that venue's network. "Tortillas Alizze" almost certainly is.
+# SSID really is that venue's network. "Cafe Marguerite" almost certainly is.
 # "Starbucks" is not any particular Starbucks, and a household that named its
 # router after a favorite restaurant is not at that restaurant. Results are
 # written with geo_source='google_places' so this can always be told apart from
@@ -45,7 +45,7 @@ PLACES_ENDPOINT=${PLACES_ENDPOINT:-https://places.googleapis.com/v1/places:searc
 # SSID carries but a venue's name does not, then strip everything that is not a
 # letter or digit.
 #
-# This is what lets "Tortillas Alizze" match the SSID "TortillasAlizze_5G"
+# This is what lets "Cafe Marguerite" match the SSID "CafeMarguerite_5G"
 # without also letting it match "Tortilleria Alice". The comparison after
 # normalization is EXACT -- no edit distance, no substring. Fuzzy matching here
 # would invent a location for a real person, which is the one failure mode this
@@ -66,6 +66,25 @@ places_normalize () {
 	printf '%s' "$s"
 }
 
+# places_query <string>
+#
+# The human-readable form actually sent to Google's searchText. An SSID uses
+# '-', '_' and '.' where a venue name uses spaces ("188-Family-Medical-Center"),
+# so those become spaces -- searchText matches "188 Family Medical Center" far
+# better than the raw token or the space-less normalized key. Case is preserved
+# (Google is case-insensitive, and the original reads better in --dry-run), and
+# runs of whitespace are collapsed.
+#
+# This is only the query text. The result is still verified with the exact
+# places_normalize comparison, so a fuzzier query cannot loosen what is accepted.
+places_query () {
+	local s=$1
+	s=${s//[-_.]/ }                     # separators -> spaces
+	while [[ "$s" == *"  "* ]]; do s=${s//  / }; done   # collapse runs
+	s=${s# }; s=${s% }                  # trim
+	printf '%s' "$s"
+}
+
 # places_candidate_sql <limit>
 #
 # The candidate query, in one place so --dry-run cannot drift from the pass.
@@ -73,7 +92,7 @@ places_normalize () {
 # Categories are used to exclude, not to include. The obvious-looking
 # "category = 'LOCATION_SPECIFIC'" is wrong: check_address() assigns that on the
 # shape ^[0-9]{1,5} [A-Z]..., so it holds STREET ADDRESSES -- "1190 Lowell" --
-# and not named venues at all. A venue like "Tortillas Alizze" matches no
+# and not named venues at all. A venue like "Cafe Marguerite" matches no
 # keyword list and lands in whatever the catch-all is. So the SQL drops the
 # categories that certainly are not businesses, and places_reject() judges the
 # rest on shape.
@@ -94,6 +113,10 @@ select concat_ws('|', ssid_hex, convert(unhex(ssid_hex) using utf8mb4))
    -- name. A household is not a business, and asking Google about a surname
    -- returns whatever venue happens to share it.
    and (is_name is null or is_name in ('0',''))
+   -- check_airport already placed these at a named airport (an IATA code in the
+   -- SSID, e.g. "SJO Free Wifi"). The location is known; paying Google to look
+   -- up "SJO Free Wifi by Samsung" as a business is wasted and returns noise.
+   and (is_airport is null or is_airport in ('0',''))
    and (category is null or category not in (
         'OTHER_ANOMALOUS','OTHER_NUMERIC','LOCATION_SPECIFIC',
         'TECH_CPE','TECH_PHONE','TECH_PRINTER','TECH_OTHER',
@@ -189,7 +212,7 @@ places_fetch () {
 	# jq builds the body so an SSID containing a quote, a backslash or a
 	# newline cannot break out of the JSON. Never interpolate an SSID by hand.
 	local payload
-	payload=$(jq -nc --arg q "$ssid" '{textQuery:$q, maxResultCount:5}') || return 1
+	payload=$(jq -nc --arg q "$(places_query "$ssid")" '{textQuery:$q, maxResultCount:5}') || return 1
 
 	body=$(curl -sS --max-time 20 -w '\n%{http_code}' \
 		-X POST "$PLACES_ENDPOINT" \

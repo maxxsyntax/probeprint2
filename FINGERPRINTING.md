@@ -45,6 +45,51 @@ combination is hashed into the generated column `ssid.ie_fp`.
 `ssid.vht` is kept for continuity with historical rows, not because it earns its
 place.
 
+### HT subfields and WPS UUID-E — deeper than the whole-element hash
+
+Two additions push past hashing IE 45 as one opaque word.
+
+Vanhoef 2016 showed the **HT Capabilities element's high-entropy subfields** are
+individually stable per device and more discriminative than the element as a
+whole: A-MPDU parameters, the supported-MCS-set bitmask, transmit-beamforming,
+and antenna-selection. `ingest` now pulls these as `ssid.ht_ampdu`,
+`ssid.ht_mcsset`, `ssid.txbf`, `ssid.asel` and folds them into `ie_fp`, so two
+devices sharing a coarse `ht.capabilities` word but differing in MCS set or
+beamforming no longer collide.
+
+The **WPS UUID-E** (`ssid.wps_uuid`) is different in kind. It is a static 16-byte
+identifier in the WPS information element that, in several implementations, is
+*derived from the hardware MAC* — so it is stable across MAC randomization and
+identifies the individual device, not its class. It is therefore kept in its own
+column and **deliberately excluded from `ie_fp`** (a class hash): a UUID-E match
+is a near-certain same-device link, on par with a non-randomized MAC.
+
+It is a **`seqgraph` union key**, alongside the static-MAC rule: before any
+time/sequence inference runs, frames sharing a UUID-E are unioned into one
+device. That holds a device together straight through MAC randomization — two
+frames with different randomized addresses and the same UUID-E are provably one
+device, which neither the sequence graph nor the IE gate could establish on
+their own. An empty UUID-E (no WPS element) is not an identifier and never
+unions. See `../wifi_research/papers/paper_tracker.md`.
+
+Migration note: adding the HT subfields to `ie_fp` changes every existing
+fingerprint's hash value (the expression gained fields). Values stay internally
+consistent — a device's rows all rehash the same way — so grouping is unaffected;
+only the opaque hash strings differ. `build_dbs.sh` migrates the generated column
+in place.
+
+`ssid.frame_len` (the total probe length) is captured too, as a coarse
+model-level feature — a fallback fingerprint when IE parsing yields nothing. It
+is deliberately *not* folded into `ie_fp`: it is derived from the same IE set the
+hash already covers, so it would add no independent signal there.
+
+**Scrambler seed — wanted but unavailable.** The 802.11 scrambler seed would
+link successive bursts across MAC rotation independently of the sequence number,
+and `other_fields.txt` lists it. But it is a PHY-layer artifact the demodulator
+discards; no tshark or radiotap field exposes it on commodity capture hardware.
+It would take an SDR or patched firmware, so it is out of scope for this
+capture path — noted here so it is not re-proposed as a quick win.
+
 ### Two caveats that limit IE fingerprinting
 
 - **It identifies a device model and OS build, not a person.** Pintor 2022 calls
@@ -375,7 +420,7 @@ Roughly in descending order of value for this engagement:
    not.
 3. **Multi-node trilateration** — the `client/` tree that deployed three capture
    nodes into one database was deleted in Aug 2026; recover it from git history to
-   revive this. The Pi-side glue survives as `capture-scripts/pi/`.
+   revive this. The Pi-side glue survives as `platforms/pi/`.
 4. **Timing and behavioral signal** — inter-burst interval, frames per burst,
    channel rotation order are all driver and chipset specific. Pintor's six
    modes show probe rate changes with screen state, which makes it an

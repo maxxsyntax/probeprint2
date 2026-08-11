@@ -51,6 +51,26 @@ assert_contains "an identifiability score is shown" "identifiability" "$out"
 assert_eq "the device appears exactly once" "1" \
     "$(printf '%s\n' "$out" | grep -c "^=== $alias")"
 
+# --- devices with nothing to say collapse to one line ---------------------
+# A device that probed no usable network has an empty PNL and zero
+# identifiability. It gets no dossier block -- that would be a header over a
+# bare "Preferred nets: 0" -- but it is still counted, so the operator can see
+# signal is arriving. Insert one such device in range and confirm both.
+# Backdated 120s: inside the 600s window tested here, but outside the 1s window
+# the silent-window assertion below uses, so it does not make that window look
+# alive.
+qt=$(( $(date +%s) - 120 ))
+mysql probeprint -e "insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht) values
+  ('<MISSING>','da:00:00:00:aa:01','$qt.500000','-55',2437,9500,'0x1');"
+./analysis-scripts/seqgraph.sh >/dev/null 2>&1
+qdev=$(sq1 "select distinct device_id from ssid where wlan_sa='da:00:00:00:aa:01';")
+qalias=$(sq1 "select alias from devices where id = $qdev;")
+qout=$(display_inrange 600)
+assert_eq "an empty-PNL device gets no dossier block" "0" \
+    "$(printf '%s\n' "$qout" | grep -c "^=== $qalias")"
+assert_contains "but is counted so signal is visibly flowing" \
+    "probing no usable networks" "$qout"
+
 # --- humans sort ahead of anonymous devices -------------------------------
 # The roster still leads with people even though the device heads each block:
 # a block carrying a SUBJECT line must appear before the first block without
@@ -102,11 +122,11 @@ now=$(date +%s)
 # Distinct timestamps: `time` is the primary key, so two rows sharing one
 # collide and the whole multi-row insert is rejected.
 mysql probeprint -e "insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht,device_id) values
-  (lower(hex('Tortillas Alizze')),'be:00:00:00:09:01','$now.010000','-44',2437,7100,'0x1',NULL),
+  (lower(hex('Cafe Marguerite')),'be:00:00:00:09:01','$now.010000','-44',2437,7100,'0x1',NULL),
   ('<MISSING>','be:00:00:00:09:02','$now.020000','-80',2437,7200,'0x1',NULL);"
 out=$(display_inrange 600)
 
-assert_contains "an ungrouped frame still shows its SSID" "Tortillas Alizze" "$out"
+assert_contains "an ungrouped frame still shows its SSID" "Cafe Marguerite" "$out"
 assert_contains "and the address that sent it" "be:00:00:00:09:01" "$out"
 assert_contains "and a proximity band, not a raw dBm" "near by" "$out"
 assert_contains "a wildcard-only device is labeled, not left blank" \
@@ -128,7 +148,7 @@ out=$(display_inrange 600)
 assert_not_contains "after seqgraph it is no longer listed as ungrouped" \
     "be:00:00:00:09:01  [" "$out"
 assert_eq "and the frame now belongs to a device" "1" \
-    "$(sq1 "select count(*) from ssid where ssid_hex=lower(hex('Tortillas Alizze')) and device_id is not null;")"
+    "$(sq1 "select count(*) from ssid where ssid_hex=lower(hex('Cafe Marguerite')) and device_id is not null;")"
 
 # --- separator safety -----------------------------------------------------
 # SSIDs are arbitrary bytes and routinely contain '|', ',' and tabs, so the row

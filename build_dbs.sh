@@ -46,10 +46,39 @@ mysql probeprint -e "alter table ssid add column if not exists extcap varchar(12
 mysql probeprint -e "alter table ssid add column if not exists vendor_oui varchar(128) default null;" # IE 221
 mysql probeprint -e "alter table ssid add column if not exists ie_order varchar(128) default null;"   # IE presence + order
 
+# Fingerprinting fields added after the first schema (FINGERPRINTING.md). WPS
+# UUID-E is a per-device identifier that survives MAC randomization -- its own
+# column, an instance ID, not part of the class fingerprint. The HT-Capabilities
+# subfields are high-entropy and hardware-stable; they sharpen ie_fp.
+mysql probeprint -e "alter table ssid add column if not exists wps_uuid varchar(64) default null;"
+mysql probeprint -e "alter table ssid add column if not exists ht_ampdu  varchar(24) default null;"
+mysql probeprint -e "alter table ssid add column if not exists ht_mcsset varchar(64) default null;"
+mysql probeprint -e "alter table ssid add column if not exists txbf      varchar(32) default null;"
+mysql probeprint -e "alter table ssid add column if not exists asel      varchar(16) default null;"
+# frame.len: total on-wire probe length, a coarse model-level feature. Its own
+# column, not part of ie_fp (it is derived from the same IE set ie_fp hashes).
+mysql probeprint -e "alter table ssid add column if not exists frame_len integer default null;"
+
 # The IE fingerprint proper. Generated rather than written by the ingest path
 # so it can never drift out of sync with its inputs. Deliberately excludes the
 # SSID and the MAC: this identifies a device model/OS build, not an individual.
-mysql probeprint -e "alter table ssid add column if not exists ie_fp char(32) as (md5(concat_ws('|',coalesce(ht,''),coalesce(extcap,''),coalesce(vendor_oui,''),coalesce(ie_order,'')))) persistent;"
+# The HT subfields (ampdu/mcsset/txbf/asel) are folded in; WPS UUID-E is not --
+# it is an individual identifier, not a class feature.
+#
+# ie_fp is a persistent generated column, so its expression cannot be changed by
+# "add if not exists" once it exists. Migrate in place: if an older definition
+# is present (one that does not yet reference ht_mcsset), drop and recreate it.
+# Safe because it is derived data -- the recompute is the cost of the migration.
+IE_FP_EXPR="md5(concat_ws('|',coalesce(ht,''),coalesce(extcap,''),coalesce(vendor_oui,''),coalesce(ie_order,''),coalesce(ht_ampdu,''),coalesce(ht_mcsset,''),coalesce(txbf,''),coalesce(asel,'')))"
+stale=$(mysql -N probeprint -e "select count(*) from information_schema.columns
+  where table_schema=database() and table_name='ssid' and column_name='ie_fp'
+    and generation_expression not like '%ht_mcsset%';" 2>/dev/null)
+if [ "${stale:-0}" = "1" ]; then
+	echo "migrating ie_fp to include HT subfields"
+	mysql probeprint -e "drop index if exists idx_ssid_ie_fp on ssid;"
+	mysql probeprint -e "alter table ssid drop column ie_fp;"
+fi
+mysql probeprint -e "alter table ssid add column if not exists ie_fp char(32) as ($IE_FP_EXPR) persistent;"
 mysql probeprint -e "create index if not exists idx_ssid_ie_fp on ssid (ie_fp);"
 
 # ---------------------------------------------------------------------------
@@ -124,6 +153,29 @@ mysql probeprint -e "create table if not exists device_stage (
   time       varchar(22) primary key,
   device_key char(16) not null,
   key idx_stage_key (device_key)
+) $DB_COLLATE;"
+
+# Incremental seqgraph scratch: the frames a run must (re)assign, and the devices
+# it therefore touched. Scoping the PNL/stats rebuild to the touched set is what
+# keeps an incremental run from re-aggregating the whole ssid table every sweep.
+mysql probeprint -e "create table if not exists seqgraph_newframes (
+  time varchar(22) primary key
+) $DB_COLLATE;"
+mysql probeprint -e "create table if not exists seqgraph_touched (
+  device_id int primary key
+) $DB_COLLATE;"
+
+# Import table for the offline WiGLE exports (WigleWifi_*.csv[.gz]). One row per
+# WIFI observation; geo_from_wigle_csv rebuilds it each run and resolves SSIDs
+# and directed-probe BSSIDs from it, entirely offline. ssid_hex is indexed for
+# the join to ssid_intel, bssid for the join to bssid_geo.
+mysql probeprint -e "create table if not exists wigle_import (
+  ssid_hex varchar(255),
+  bssid    varchar(17),
+  lat      double,
+  lon      double,
+  key idx_wigle_ssid  (ssid_hex),
+  key idx_wigle_bssid (bssid)
 ) $DB_COLLATE;"
 
 mysql probeprint -e "alter table ssid add column if not exists device_id int default null;"
@@ -298,3 +350,80 @@ done
 # bash tried to execute `create` as a command and the user was never created.
 mysql -e "create user if not exists 'pi'@'%';"
 mysql -e "grant all privileges on probeprint.* to 'pi'@'%';"
+
+# ---------------------------------------------------------------------------
+# Per-engagement working tables vs the master archive.
+#
+# seqgraph's sequence/time linkage assumes ONE continuous capture. Run over a
+# corpus of many merged captures it chains unrelated sessions into giant false
+# devices (one such cluster spanned two years and 258k MACs). So capture and all
+# grouping run on the WORKING tables -- ssid / devices / device_ssid -- which
+# hold only the current engagement, keeping seqgraph bounded and fast. Between
+# engagements, fold_engagement.sh appends the working rows into the MASTER
+# archive below, namespaced by engagement, then truncates the working tables for
+# the next one. seqgraph NEVER runs on the master.
+#
+# This block is at the very END of build_dbs.sh on purpose: `create table
+# ssid_master like ssid` copies the schema as it stands at that line, so it must
+# come after EVERY `alter table ssid add column` above (wlan_da among them, added
+# late). A working-table column added later must be mirrored into ssid_master, so
+# fold_engagement.sh folds only columns present in both tables to stay safe.
+#
+# ssid_master mirrors the working ssid; a frame folds in with its device_id
+# intact, and the engagement is carried by the existing `tag` column. time stays
+# the primary key -- a cross-engagement timestamp collision drops one frame on
+# fold via insert-ignore, which is acceptable and matches the ingest path.
+mysql probeprint -e "create table if not exists ssid_master like ssid;"
+
+# devices_master and device_ssid_master are keyed by (engagement, id): each
+# engagement autoincrements its own device ids from 1, so the engagement is what
+# makes them unique in the archive. The working tables' single-column unique keys
+# on id/device_key/alias would collide across engagements and are NOT reproduced.
+mysql probeprint -e "create table if not exists devices_master (
+  engagement      varchar(64) not null,
+  id              int         not null,
+  device_key      char(16)    not null,
+  alias           varchar(64) default null,
+  first_seen      varchar(22) default null,
+  last_seen       varchar(22) default null,
+  frame_count     int         default 0,
+  mac_count       int         default 0,
+  ssid_count      int         default 0,
+  ie_fp_distinct  int         default 0,
+  vendor          varchar(64) default null,
+  confidence      varchar(8)  default null,
+  pnl_size        int         default 0,
+  pnl_rarity      double      default null,
+  primary key (engagement, id),
+  key idx_dm_key    (engagement, device_key),
+  key idx_dm_vendor (vendor)
+) $DB_COLLATE;"
+
+mysql probeprint -e "create table if not exists device_ssid_master (
+  engagement  varchar(64)  not null,
+  device_id   int          not null,
+  ssid_hex    varchar(200) not null,
+  frame_count int          default 0,
+  first_seen  varchar(22)  default null,
+  last_seen   varchar(22)  default null,
+  primary key (engagement, device_id, ssid_hex),
+  key idx_dsm_ssid (ssid_hex)
+) $DB_COLLATE;"
+
+# Cross-engagement device links. NOT a merge: device identities stay per
+# engagement, and this only records that two of them are probably the same
+# device or person. basis says why -- a shared burned-in MAC or WPS UUID-E is a
+# hardware identity ('static_mac'/'wps_uuid'); 'attributes' means they shared at
+# least three discriminative traits (a location, a name, a category, a vendor, a
+# rare SSID). Pairs are stored in a canonical order (a < b) so each appears once.
+mysql probeprint -e "create table if not exists device_xref (
+  engagement_a varchar(64) not null,
+  device_a     int         not null,
+  engagement_b varchar(64) not null,
+  device_b     int         not null,
+  basis        varchar(16) not null,
+  detail       varchar(255) default null,
+  match_count  int         default 1,
+  primary key (engagement_a, device_a, engagement_b, device_b, basis),
+  key idx_xref_b (engagement_b, device_b)
+) $DB_COLLATE;"

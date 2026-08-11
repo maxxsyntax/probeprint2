@@ -72,10 +72,82 @@ SEQGRAPH_GATE_IE=${SEQGRAPH_GATE_IE:-1}
 
 # seqgraph_assign [--recompute]
 seqgraph_assign () {
-	local guard="and device_id is null"
-	[ "${1:-}" = "--recompute" ] && guard=""
+	local recompute=0
+	[ "${1:-}" = "--recompute" ] && recompute=1
 
-	echo "seqgraph_assign start $(date +"%H:%M:%S.%3N") (alpha=${SEQGRAPH_ALPHA}s beta=${SEQGRAPH_BETA})"
+	echo "seqgraph_assign start $(date +"%H:%M:%S.%3N") (alpha=${SEQGRAPH_ALPHA}s beta=${SEQGRAPH_BETA}$([ "$recompute" = 1 ] && echo ' recompute'))"
+
+	# --- INCREMENTAL vs RECOMPUTE ------------------------------------------
+	# Recompute regroups every frame from scratch: correct, but on a large
+	# collection it rebuilds the whole graph each run and (before READ COMMITTED)
+	# froze concurrent capture. Incremental groups only the new (device_id null)
+	# frames, and is the default a live node runs every sweep.
+	#
+	# Grouping new frames in isolation would be WRONG -- a returning device would
+	# be minted as a brand-new one each sweep (fragmentation). A new frame links
+	# to an existing device two ways, handled separately by their reach:
+	#
+	#   1. Unbounded -- a static (non-randomized) MAC or a WPS UUID-E identifies a
+	#      device no matter how long ago it was last seen. Assigned directly in
+	#      SQL below, before the graph.
+	#   2. Bounded -- time/sequence continuity reaches back only ALPHA seconds, so
+	#      the graph runs over the new frames plus a tail of already-grouped
+	#      frames from the last ALPHA seconds, each carrying its device_key. A
+	#      component anchored on a tail frame inherits that device's key, so the
+	#      new frames merge into the existing device rather than starting a new one.
+	#
+	# Incremental is a good approximation, not identical to recompute: a new frame
+	# that bridges two long-established devices merges only into the earlier one.
+	# Run --recompute periodically for a fully consistent regroup.
+	if [ "$recompute" != 1 ]; then
+		# Snapshot the frames this run must assign (everything still ungrouped).
+		# Nothing to do if there are none -- return before the expensive rebuild,
+		# which is what makes an idle sweep on a live node near-instant.
+		mysql probeprint <<'SQL'
+truncate table seqgraph_newframes;
+insert into seqgraph_newframes (time)
+  select time from ssid where device_id is null and seq is not null and time <> '';
+SQL
+		if [ "$(mysql -N probeprint <<< 'select count(*) from seqgraph_newframes;')" = "0" ]; then
+			echo "  no new frames to group"
+			echo "seqgraph_assign stop $(date +"%H:%M:%S.%3N")"
+			return
+		fi
+
+		# 1. Unbounded links, in SQL. is_random second-hex-digit set {2,6,a,e}
+		#    (locally-administered, unicast) mirrors the awk is_random(); anything
+		#    else is a burned-in MAC that identifies the device outright.
+		# The MAC/uuid -> existing-device maps are built only over the identifiers
+		# the NEW frames actually carry (the `... in (select ... from
+		# seqgraph_newframes)` restriction), not the whole table. Without that
+		# restriction each sweep GROUP BYs all 735k rows -- ~3 minutes on a merged
+		# collection even to place one frame.
+		mysql probeprint <<'SQL'
+set session transaction isolation level read committed;
+update ssid s
+  join (select wlan_sa, min(device_id) did from ssid
+         where device_id is not null
+           and lower(substr(wlan_sa,2,1)) not in ('2','6','a','e')
+           and wlan_sa in (select nf.wlan_sa from ssid nf
+                             join seqgraph_newframes n on n.time = nf.time)
+         group by wlan_sa) m on m.wlan_sa = s.wlan_sa
+  join seqgraph_newframes n2 on n2.time = s.time
+   set s.device_id = m.did
+ where s.device_id is null
+   and lower(substr(s.wlan_sa,2,1)) not in ('2','6','a','e');
+
+update ssid s
+  join (select wps_uuid, min(device_id) did from ssid
+         where device_id is not null and wps_uuid is not null and wps_uuid <> ''
+           and wps_uuid in (select nf.wps_uuid from ssid nf
+                              join seqgraph_newframes n on n.time = nf.time
+                             where nf.wps_uuid is not null and nf.wps_uuid <> '')
+         group by wps_uuid) w on w.wps_uuid = s.wps_uuid
+  join seqgraph_newframes n2 on n2.time = s.time
+   set s.device_id = w.did
+ where s.device_id is null and s.wps_uuid is not null and s.wps_uuid <> '';
+SQL
+	fi
 
 	# Ordered by time: the linking pass is a forward sweep, which lets it stop
 	# scanning candidates as soon as the time threshold is exceeded.
@@ -85,13 +157,29 @@ seqgraph_assign () {
 	# the rest. The timestamp is carried through as the original *string*: it is
 	# a varchar primary key, so reformatting it as a float would produce an
 	# UPDATE that matches nothing.
-	local sql="select concat_ws('|', time, seq, ifnull(case when ie_order is null then '' else ie_fp end,''), ifnull(wlan_sa,''))
-	             from ssid
-	            where seq is not null
-	              and time is not null
-	              and time != ''
-	              $guard
-	            order by cast(time as decimal(20,7));"
+	#
+	# The sixth column is the existing device_key for a grouped tail frame, empty
+	# for a frame to be (re)assigned. Under recompute it is always empty (every
+	# frame regroups from scratch); incremental carries it so new frames inherit
+	# a recent device's key.
+	local sql
+	if [ "$recompute" = 1 ]; then
+		sql="select concat_ws('|', time, seq, ifnull(case when ie_order is null then '' else ie_fp end,''), ifnull(wlan_sa,''), ifnull(wps_uuid,''), '')
+		       from ssid
+		      where seq is not null and time is not null and time != ''
+		      order by cast(time as decimal(20,7));"
+	else
+		# New frames, plus grouped frames within ALPHA of the earliest new one
+		# (the reach of a time/sequence edge). Tail frames carry their device_key.
+		sql="select concat_ws('|', s.time, s.seq, ifnull(case when s.ie_order is null then '' else s.ie_fp end,''), ifnull(s.wlan_sa,''), ifnull(s.wps_uuid,''), ifnull(d.device_key,''))
+		       from ssid s
+		       left join devices d on d.id = s.device_id
+		      where s.seq is not null and s.time is not null and s.time != ''
+		        and ( s.device_id is null
+		           or cast(s.time as decimal(20,7)) >=
+		              (select min(cast(time as decimal(20,7))) from seqgraph_newframes) - $SEQGRAPH_ALPHA )
+		      order by cast(s.time as decimal(20,7));"
+	fi
 
 	mysql probeprint <<< "truncate table device_stage;"
 
@@ -106,6 +194,9 @@ seqgraph_assign () {
 		s[n]   = $2 + 0
 		fp[n]  = $3          # ie_fp, or empty when the frame carried no IEs
 		mac[n] = $4
+		wps[n] = $5          # WPS UUID-E, or empty when the frame carried none
+		dk[n]  = $6          # existing device_key for a grouped tail frame; empty
+		                     # for a frame to be assigned. dk!="" ⟺ tail frame.
 		parent[n] = n        # union-find: every node starts in its own set
 		n++
 	}
@@ -161,6 +252,19 @@ seqgraph_assign () {
 			else firstseen[mac[i]] = i
 		}
 
+		# Frames sharing a WPS UUID-E are one device, for the same reason and
+		# with more force than a static MAC: the UUID-E is a persistent per-device
+		# identifier carried in the WPS element, in several implementations
+		# derived from the hardware MAC, so it holds THROUGH randomization -- two
+		# frames with different randomized MACs but the same UUID-E are provably
+		# the same device. Union them before inference too. Empty (no WPS element)
+		# is not an identifier and never unions.
+		for (i = 0; i < n; i++) {
+			if (wps[i] == "") continue
+			if (wps[i] in wpsseen) union(wpsseen[wps[i]], i)
+			else wpsseen[wps[i]] = i
+		}
+
 		for (i = 0; i < n; i++) {
 			best = -1; best_dt = -1; best_ds = -1
 
@@ -190,16 +294,24 @@ seqgraph_assign () {
 			}
 		}
 
-		# Stage (frame, anchor). MySQL derives device_key from the anchor, so
-		# the hash definition lives in exactly one place.
+		# Stage only the frames that need assigning (tail frames already have a
+		# device_id and are here purely as anchors). A component device_key is the
+		# key of its EARLIEST member: a grouped tail frame contributes its
+		# existing key, so the new frames join that device; a new frame root
+		# contributes md5 of its time, minting a new device. find() returns the
+		# earliest-indexed root, and rows are time-ordered, so the root is the
+		# earliest member. (No apostrophes in this awk block -- they would close
+		# the single-quoted program.)
 		batch = 0
 		for (i = 0; i < n; i++) {
-			anchor = ts[find(i)]
+			if (dk[i] != "") continue          # tail frame: keep its device_id
+			r = find(i)
+			key = (dk[r] != "") ? "\"" dk[r] "\"" : "substr(md5(\"" ts[r] "\"),1,16)"
 			if (batch % 500 == 0) {
 				if (batch > 0) print ";"
 				printf "insert into device_stage (time, device_key) values "
 			} else printf ","
-			printf "(\"%s\", substr(md5(\"%s\"),1,16))", ts[i], anchor
+			printf "(\"%s\", %s)", ts[i], key
 			batch++
 		}
 		if (batch > 0) print ";"
@@ -210,7 +322,18 @@ seqgraph_assign () {
 	# Mint any device we have not seen before, then point its frames at it.
 	# `insert ignore` leans on the unique key over device_key: a component that
 	# already exists keeps the autoincrement id it was first given.
+	#
+	# READ COMMITTED, not the server default REPEATABLE READ. This big UPDATE
+	# joins device_stage to every ssid row it groups; under REPEATABLE READ its
+	# scan takes next-key/gap locks, including the trailing gap above the largest
+	# time -- exactly where a live capture inserts its next frame. A concurrent
+	# capture.sh INSERT then blocks until this UPDATE commits and times out
+	# ("Lock wait timeout exceeded"), freezing capture on a field node that runs
+	# analysis.sh and capture.sh at once. READ COMMITTED sets no gap locks, so it
+	# locks only the existing rows it actually updates; a new-timestamp INSERT
+	# never collides with those, and capture keeps flowing.
 	mysql probeprint <<'SQL'
+set session transaction isolation level read committed;
 insert ignore into devices (device_key) select distinct device_key from device_stage;
 
 update ssid s
@@ -219,8 +342,25 @@ update ssid s
    set s.device_id = d.id;
 SQL
 
-	seqgraph_refresh_pnl
-	seqgraph_refresh_stats
+	# Rebuild the PNL and stats. Incremental scopes both to the devices this run
+	# actually touched -- those holding a frame that was new at the start -- so a
+	# live sweep does not re-aggregate the whole ssid table. Recompute rebuilds
+	# everything (no scope). assign_aliases only names aliasless devices, so it
+	# is already incremental.
+	if [ "$recompute" = 1 ]; then
+		seqgraph_refresh_pnl
+		seqgraph_refresh_stats
+	else
+		mysql probeprint <<'SQL'
+truncate table seqgraph_touched;
+insert into seqgraph_touched (device_id)
+  select distinct device_id from ssid
+   where device_id is not null
+     and time in (select time from seqgraph_newframes);
+SQL
+		seqgraph_refresh_pnl scoped
+		seqgraph_refresh_stats scoped
+	fi
 	assign_aliases
 
 	echo "seqgraph_assign stop $(date +"%H:%M:%S.%3N")"
@@ -241,14 +381,27 @@ SQL
 #
 # The wildcard sentinel is excluded: "probed for no particular network" is not a
 # preference and would otherwise appear in every device's list.
+# seqgraph_refresh_pnl [scoped]
+#
+# Rebuild device_ssid. With no argument it rebuilds every device (recompute,
+# standalone --pnl, tests). Called with "scoped", it limits every clause to the
+# devices in seqgraph_touched -- the ones an incremental run actually changed --
+# so a live sweep does not re-aggregate the whole ssid table.
 seqgraph_refresh_pnl () {
-	mysql probeprint <<'SQL'
+	local f1="" f2="" f3=""     # device filters for the three statements
+	if [ "${1:-}" = "scoped" ]; then
+		f1="and device_id in (select device_id from seqgraph_touched)"
+		f2="and ds.device_id in (select device_id from seqgraph_touched)"
+		f3="where ds.device_id in (select device_id from seqgraph_touched)"
+	fi
+	mysql probeprint <<SQL
 replace into device_ssid (device_id, ssid_hex, frame_count, first_seen, last_seen)
 select device_id, ssid_hex, count(*), min(time), max(time)
   from ssid
  where device_id is not null
    and ssid_hex <> '<MISSING>'
    and ssid_hex <> ''
+   $f1
  group by device_id, ssid_hex;
 
 -- Drop rows for (device, ssid) pairs that no longer exist, which happens after
@@ -256,7 +409,7 @@ select device_id, ssid_hex, count(*), min(time), max(time)
 delete ds from device_ssid ds
  left join ssid s
         on s.device_id = ds.device_id and s.ssid_hex = ds.ssid_hex
- where s.time is null;
+ where s.time is null $f2;
 
 -- pnl_rarity is the summed rarity of the list: how identifying it is taken as a
 -- whole. Requires standalone_rarity.sh to have run; stays NULL otherwise rather
@@ -268,6 +421,7 @@ update devices d
            sum(i.rarity)     as r
       from device_ssid ds
       left join ssid_intel i on i.ssid_hex = ds.ssid_hex
+     $f3
      group by ds.device_id
   ) x on x.device_id = d.id
    set d.pnl_size   = x.n,
@@ -349,7 +503,9 @@ SQL
 # excluded from the count; otherwise a capture with no IE data would look
 # perfectly consistent rather than simply unknown.
 seqgraph_refresh_stats () {
-	mysql probeprint <<'SQL'
+	local f1=""
+	[ "${1:-}" = "scoped" ] && f1="and device_id in (select device_id from seqgraph_touched)"
+	mysql probeprint <<SQL
 update devices d
   join (
     select device_id,
@@ -361,6 +517,7 @@ update devices d
            count(distinct case when ie_order is not null then ie_fp end) as fpd
       from ssid
      where device_id is not null
+       $f1
      group by device_id
   ) x on x.device_id = d.id
    set d.first_seen     = x.fs,
@@ -411,7 +568,14 @@ assign_aliases () {
 		return 1
 	fi
 
-	local id key ai ni base candidate n
+	local id key ai ni base candidate n a
+
+	# Nothing to name if every device already has an alias -- the usual state on
+	# an incremental sweep. Return before touching the whole devices table, which
+	# is what makes a no-new-device sweep instant.
+	local pending
+	pending=$(mysql -N probeprint <<< "select count(*) from devices where alias is null;")
+	[ "${pending:-0}" -eq 0 ] && return 0
 
 	# Collision detection is done in memory against a set of names already in
 	# use, and the updates are emitted as one batch.
@@ -421,10 +585,14 @@ assign_aliases () {
 	# 11,448 devices that is ~23,000 spawns and dominates the runtime of the
 	# whole pass; at a tighter alpha, which yields 65,000 devices, it is far
 	# worse. Two queries and one piped batch instead.
+	#
+	# mapfile, not `while read`, to load the in-use set: on 38k devices the
+	# per-line read loop alone ran ~3 minutes and dominated every seqgraph sweep.
+	# mapfile reads them in one pass; the assoc-array fill is then just memory.
 	local -A used=()
-	while IFS= read -r a; do
-		[ -n "$a" ] && used["$a"]=1
-	done < <(mysql -N probeprint <<< "select alias from devices where alias is not null;")
+	local -a existing
+	mapfile -t existing < <(mysql -N probeprint <<< "select alias from devices where alias is not null;")
+	for a in "${existing[@]}"; do [ -n "$a" ] && used["$a"]=1; done
 
 	{
 		echo "start transaction;"

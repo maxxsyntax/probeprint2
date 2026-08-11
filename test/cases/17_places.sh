@@ -29,20 +29,20 @@ seed () { # seed <ssid> <json>
 }
 
 # One venue, name matches exactly once normalized. The definitive case.
-seed 'Tortillas Alizze' '{"places":[
-  {"displayName":{"text":"Tortillas Alizze"},
+seed 'Cafe Marguerite' '{"places":[
+  {"displayName":{"text":"Cafe Marguerite"},
    "formattedAddress":"Av. Insurgentes Sur 1234, Mexico City",
    "location":{"latitude":19.36180000,"longitude":-99.17610000}}]}'
 
 # The same venue, as a router actually spells it. Must reach the same place.
-seed 'TortillasAlizze_5G' '{"places":[
-  {"displayName":{"text":"Tortillas Alizze"},
+seed 'CafeMarguerite_5G' '{"places":[
+  {"displayName":{"text":"Cafe Marguerite"},
    "formattedAddress":"Av. Insurgentes Sur 1234, Mexico City",
    "location":{"latitude":19.36180000,"longitude":-99.17610000}}]}'
 
 # Google returns something plausible but differently named. Must NOT be used.
 seed 'Tortilleria Alice' '{"places":[
-  {"displayName":{"text":"Tortillas Alizze"},
+  {"displayName":{"text":"Cafe Marguerite"},
    "formattedAddress":"Av. Insurgentes Sur 1234, Mexico City",
    "location":{"latitude":19.36180000,"longitude":-99.17610000}}]}'
 
@@ -71,17 +71,17 @@ seed 'Bar' '{"places":[{"displayName":{"text":"Bar"},"formattedAddress":"Anywher
 
 # --- the definitive case --------------------------------------------------
 assert_eq "an exactly-named venue is placed" "19.3618,-99.1761" \
-    "$(sq1 "select concat_ws(',',lat,lon) from ssid_intel where ssid_hex=lower(hex('Tortillas Alizze'));")"
+    "$(sq1 "select concat_ws(',',lat,lon) from ssid_intel where ssid_hex=lower(hex('Cafe Marguerite'));")"
 assert_eq "and the street address is stored" "Av. Insurgentes Sur 1234, Mexico City" \
-    "$(sq1 "select street_address from ssid_intel where ssid_hex=lower(hex('Tortillas Alizze'));")"
+    "$(sq1 "select street_address from ssid_intel where ssid_hex=lower(hex('Cafe Marguerite'));")"
 assert_eq "and the provenance says it was inferred, not observed" "google_places" \
-    "$(sq1 "select geo_source from ssid_intel where ssid_hex=lower(hex('Tortillas Alizze'));")"
-assert_eq "and what Google called it is kept" "Tortillas Alizze" \
-    "$(sq1 "select place_name from ssid_intel where ssid_hex=lower(hex('Tortillas Alizze'));")"
+    "$(sq1 "select geo_source from ssid_intel where ssid_hex=lower(hex('Cafe Marguerite'));")"
+assert_eq "and what Google called it is kept" "Cafe Marguerite" \
+    "$(sq1 "select place_name from ssid_intel where ssid_hex=lower(hex('Cafe Marguerite'));")"
 
 # --- SSID decoration is stripped before comparing -------------------------
 assert_eq "the same venue is found through a router's spelling" "19.3618,-99.1761" \
-    "$(sq1 "select concat_ws(',',lat,lon) from ssid_intel where ssid_hex=lower(hex('TortillasAlizze_5G'));")"
+    "$(sq1 "select concat_ws(',',lat,lon) from ssid_intel where ssid_hex=lower(hex('CafeMarguerite_5G'));")"
 
 # --- a near-miss name is refused ------------------------------------------
 # The comparison after normalization is exact. Anything looser would invent a
@@ -173,8 +173,8 @@ check_reject 'no vowel'      'CptnC'
 
 # Real venue names must survive all of it -- an over-tight filter defeats the
 # purpose of the pass.
-check_reject '' 'Tortillas Alizze'
-check_reject '' 'TortillasAlizze_5G'
+check_reject '' 'Cafe Marguerite'
+check_reject '' 'CafeMarguerite_5G'
 check_reject '' 'Campus Roastery'
 check_reject '' 'Lenbach'
 
@@ -182,7 +182,7 @@ check_reject '' 'Lenbach'
 check_reject '' 'Lissovoc'
 out=$(PLACES_REQUIRE_MULTIWORD=1 places_reject 'Lissovoc')
 assert_eq "PLACES_REQUIRE_MULTIWORD rejects a single word" "single word" "$out"
-out=$(PLACES_REQUIRE_MULTIWORD=1 places_reject 'Tortillas Alizze')
+out=$(PLACES_REQUIRE_MULTIWORD=1 places_reject 'Cafe Marguerite')
 assert_eq "and still accepts a multi-word venue" "" "$out"
 
 # A rejected name is recorded, not left null, so the next run does not
@@ -194,6 +194,27 @@ assert_eq "a rejected candidate is marked, not left to be reconsidered" "0" \
     "$(sq1 "select place_match_count from ssid_intel where ssid_hex=lower(hex('42 Wallaby Way'));")"
 assert_eq "and no request was spent on it" "0" \
     "$(sq1 "select count(*) from ssid_intel where ssid_hex=lower(hex('42 Wallaby Way')) and lat is not null;")"
+
+# --- the query sent to Google uses spaces, not the raw SSID separators -----
+# "188-Family-Medical-Center" is a venue with hyphens for spaces; searchText
+# matches "188 Family Medical Center" far better. places_query does that, while
+# places_normalize (the exact-match key) still collapses both to one string.
+assert_eq "separators in the SSID become spaces in the query" \
+    "188 Family Medical Center" "$(places_query '188-Family-Medical-Center')"
+assert_eq "and the exact-match key stays separator-free" \
+    "188familymedicalcenter" "$(places_normalize '188-Family-Medical-Center')"
+
+# --- airports are not sent to Google --------------------------------------
+# check_airport already placed these (an IATA code in the SSID). The location
+# is known; a paid Places lookup on "SJO Free Wifi by Samsung" is waste + noise.
+mysql probeprint -e "insert ignore into ssid_intel (ssid_hex) values (lower(hex('SJO Free Wifi by Samsung')));"
+mysql probeprint -e "update ssid_intel
+   set category='OTHER_UNKNOWN', lat=null, lon=null, place_match_count=null,
+       is_airport='San Jose [Juan Santamaria International], Costa Rica'
+ where ssid_hex=lower(hex('SJO Free Wifi by Samsung'));"
+out=$(./analysis-scripts/online_places.sh --dry-run 2>&1)
+assert_not_contains "an airport-flagged SSID is not a Places candidate" \
+    "SJO Free Wifi" "$out"
 
 # --- --dry-run sends nothing ----------------------------------------------
 mysql probeprint -e "update ssid_intel set place_match_count=null where ssid_hex=lower(hex('Cafe Dorado'));"

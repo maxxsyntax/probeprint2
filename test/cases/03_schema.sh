@@ -31,6 +31,17 @@ done
 assert_eq "ssid_intel.score column exists" "1" \
     "$(sq1 "select count(*) from information_schema.columns where table_schema='probeprint' and table_name='ssid_intel' and column_name='score';")"
 
+# --- fingerprinting columns added later (WPS UUID-E, HT subfields) --------
+# ALTERed onto ssid after the first schema; build_dbs must create them on a
+# fresh install too.
+for c in wps_uuid ht_ampdu ht_mcsset txbf asel frame_len; do
+    assert_eq "ssid.$c column exists" "1" \
+        "$(sq1 "select count(*) from information_schema.columns where table_schema='probeprint' and table_name='ssid' and column_name='$c';")"
+done
+# ie_fp survived the migration and folds in the HT subfields.
+assert_contains "ie_fp includes HT subfields after migration" "ht_mcsset" \
+    "$(sq1 "select generation_expression from information_schema.columns where table_schema='probeprint' and table_name='ssid' and column_name='ie_fp';")"
+
 # --- the 'pi' user the client/ nodes authenticate as --------------------
 assert_eq "mysql user 'pi' was created" "1" \
     "$(sq1 "select count(*) from mysql.user where user='pi';")"

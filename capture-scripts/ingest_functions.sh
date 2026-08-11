@@ -53,6 +53,31 @@ PROBE_TSHARK_ARGS=(
     -e wlan.tag.oui
     -e wlan.tag.number
     -e wlan.da
+    # Appended for fingerprinting (see FINGERPRINTING.md). Order fixed; never
+    # insert above this line or saved-capture positions shift.
+    #   wps.uuid_e         a static per-device ID in the WPS IE that in some
+    #                      implementations is derived from the hardware MAC, so
+    #                      it survives MAC randomization outright. An instance
+    #                      identifier, kept in its own column, NOT folded into
+    #                      the class fingerprint ie_fp.
+    #   ht.ampduparam,     high-entropy HT-Capabilities subfields Vanhoef 2016
+    #   ht.mcsset,         found stable per device and more discriminative than
+    #   txbf, asel         the whole ht.capabilities word. Folded into ie_fp.
+    -e wps.uuid_e
+    -e wlan.ht.ampduparam
+    -e wlan.ht.mcsset
+    -e wlan.txbf
+    -e wlan.asel
+    #   frame.len          total on-wire length. It correlates with the OS/vendor
+    #                      IE set (SenseFlow, other_fields.txt), so it is a coarse
+    #                      model-level feature and a fallback when IE parsing
+    #                      yields nothing. Its own column; NOT folded into ie_fp,
+    #                      which already hashes the IEs frame.len is derived from.
+    #
+    # (There is no scrambler-seed field: 802.11 scrambler state is a PHY-layer
+    #  artifact the demodulator drops, absent from tshark/radiotap. Recovering it
+    #  needs an SDR or patched firmware, out of scope for this capture path.)
+    -e frame.len
     -E "separator=$PROBE_SEP"
 )
 
@@ -64,9 +89,35 @@ PROBE_TSHARK_ARGS=(
 # (ingest_stream -u pi -h 192.168.1.10).
 ingest_stream () {
     local ssid_hex wlan_sa time rssi freq seq vht ht extcap vendor_oui ie_order wlan_da
+    local wps_uuid ht_ampdu ht_mcsset txbf asel frame_len
+
+    # --- backfill mode --------------------------------------------------------
+    # Normally `insert ignore`: two frames sharing a timestamp (the primary key)
+    # collide and one wins, and re-importing a capture already loaded is a no-op.
+    # That no-op is a problem when a field was ADDED after the rows were first
+    # ingested -- re-parsing the pcap is the documented way to backfill it (see
+    # the ring-buffer front end and CLAUDE.md), but `insert ignore` leaves the
+    # existing row, and its new columns, untouched.
+    #
+    # INGEST_BACKFILL=1 switches to an upsert that updates ONLY the fields added
+    # after the original ingest. Everything already captured -- tag, device_id,
+    # rssi, the original IEs -- is left alone; a returning frame just fills the
+    # columns it could not have set before. Backfilling the HT subfields also
+    # recomputes the generated ie_fp for that row, which is the whole point.
+    # Off by default: live capture and first-time imports keep insert-ignore.
+    local _ins="insert ignore" _odku=""
+    if [ "${INGEST_BACKFILL:-0}" = "1" ]; then
+        _ins="insert"
+        _odku="
+on duplicate key update
+  wps_uuid  = values(wps_uuid),  ht_ampdu = values(ht_ampdu),
+  ht_mcsset = values(ht_mcsset), txbf     = values(txbf),
+  asel      = values(asel),      frame_len = values(frame_len)"
+    fi
 
     while IFS="$PROBE_SEP" read -r ssid_hex wlan_sa time rssi freq seq vht \
-                                   ht extcap vendor_oui ie_order wlan_da; do
+                                   ht extcap vendor_oui ie_order wlan_da \
+                                   wps_uuid ht_ampdu ht_mcsset txbf asel frame_len; do
         # tshark emits a trailing blank line at the end of each capture window,
         # and a row with no timestamp is not a usable observation.
         [ -z "$time" ] && continue
@@ -94,14 +145,30 @@ ingest_stream () {
         # `insert ignore` because `time` is the primary key: two frames sharing
         # a timestamp collide. Previously pcap2db.sh retried the identical
         # failing insert in a loop, which can never succeed and span forever.
+        # tag records the source of the observation, so a merged database can
+        # be sliced back apart by engagement. For live capture it is the
+        # ENGAGEMENT name from .env (optional -- NULL when unset). pcap2db.sh
+        # instead tags each row with the pcap filename, and clears ENGAGEMENT
+        # around its ingest so the filename wins.
+        # A short lock wait, and a lost frame is acceptable. The seqgraph
+        # assignment now runs under READ COMMITTED so it should not lock the row
+        # this INSERT wants -- but if any pass ever does hold a conflicting lock,
+        # fail after 5s rather than the 50s default and drop this one frame.
+        # Passive capture is best-effort; freezing the ingest loop is the worse
+        # outcome. `insert ignore` already tolerates the occasional loss.
         mysql "$@" probeprint <<SQL
-insert ignore into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht,
-                         ht, extcap, vendor_oui, ie_order, wlan_da)
+set session innodb_lock_wait_timeout = 5;
+$_ins into ssid (ssid_hex, wlan_sa, time, rssi, freq, seq, vht,
+                         ht, extcap, vendor_oui, ie_order, wlan_da, tag,
+                         wps_uuid, ht_ampdu, ht_mcsset, txbf, asel, frame_len)
 values ("$ssid_hex", "$wlan_sa", "$time", "$rssi",
         nullif("$freq", ''), nullif("$seq", ''), "$vht",
         nullif("$ht", ''), nullif("$extcap", ''),
         nullif("$vendor_oui", ''), nullif("$ie_order", ''),
-        nullif("$wlan_da", ''));
+        nullif("$wlan_da", ''), nullif("${ENGAGEMENT:-}", ''),
+        nullif("$wps_uuid", ''), nullif("$ht_ampdu", ''),
+        nullif("$ht_mcsset", ''), nullif("$txbf", ''), nullif("$asel", ''),
+        nullif("$frame_len", ''))$_odku;
 SQL
     done
 }

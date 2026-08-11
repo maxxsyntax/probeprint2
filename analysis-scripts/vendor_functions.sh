@@ -32,34 +32,67 @@ _load_oui_map () {
 
 # mac2vendor
 # Fill ssid.vendor for every SSID probed by exactly one MAC address.
+#
+# Set-based. The previous form issued one `mysql` UPDATE per row inside a bash
+# loop -- on a merged collection that meant ~300k process spawns at 35ms each,
+# so it ran for hours and hung analysis.sh. Now the OUI table is loaded into a
+# temp table and one UPDATE ... JOIN does the lot. OUI extraction is pure
+# parameter expansion in the join (substring + replace), no per-row fork.
 mac2vendor () {
 	echo "mac2vendor start $(date +"%H:%M:%S.%3N")"
 	_load_oui_map
 
-	local row wlan_sa ssid_hex oui vendor
+	local sqlf; sqlf=$(mktemp)
+	local oui org n=0
+	{
+		# The OUI map as a temp table, keyed on the uppercase 6-hex assignment.
+		# Temp table + the UPDATE must share one mysql session, so both go in
+		# this single script piped in below.
+		# Collation must match ssid.wlan_sa (utf8mb4_general_ci). Left to the
+		# server default -- utf8mb4_uca1400_ai_ci on MariaDB 11 -- the join
+		# `o.oui = ...` throws ERROR 1267, illegal mix of collations, and the
+		# whole UPDATE silently fails. This is the recurring collation trap in
+		# this schema.
+		echo "create temporary table _oui (oui char(6) collate utf8mb4_general_ci primary key, org varchar(64)) charset=utf8mb4;"
+		# Only 6-hex (MA-L) assignments. oui.csv also carries MA-M (7 hex) and
+		# MA-S (9 hex) blocks; truncated to a char(6) key they collide and the
+		# duplicate-key error aborts the whole batch before the UPDATE. The
+		# original per-row code matched on the MAC's first 6 hex (`cut -b1-6`),
+		# so it only ever hit MA-L anyway -- this drops the same rows it did.
+		# `insert ignore` is belt-and-suspenders against any residual dup.
+		for oui in "${!OUI_MAP[@]}"; do
+			[ ${#oui} -eq 6 ] || continue
+			org=${OUI_MAP[$oui]//\'/\'\'}     # vendor strings hold apostrophes
+			if [ $((n % 1000)) -eq 0 ]; then
+				[ "$n" -gt 0 ] && echo ";"
+				printf 'insert ignore into _oui (oui,org) values '
+			else printf ','; fi
+			printf "('%s','%s')" "$oui" "$org"
+			n=$((n + 1))
+		done
+		[ "$n" -gt 0 ] && echo ";"
 
-	# concat_ws with an explicit delimiter: mysql -N separates columns with
-	# tabs, and this function used to set a global `IFS=\|` before splitting
-	# with `arr=($line)`. That meant the tab was never a delimiter, so arr[1]
-	# was always empty and every UPDATE matched zero rows -- mac2vendor has
-	# never actually written a vendor.
-	while IFS='|' read -r wlan_sa ssid_hex; do
-		[ -z "$wlan_sa" ] && continue
+		# One UPDATE. The subquery is the same "SSID probed by exactly one MAC"
+		# filter as before -- an SSID seen from a single address is good evidence
+		# that address is the device's real, OUI-bearing one. The OUI is the
+		# first three octets of wlan_sa (chars 1-8, "ab:cd:ef"), colons removed,
+		# uppercased, matched against _oui. coalesce(...,'.') keeps the "looked
+		# up, nothing found" marker display.sh filters on.
+		cat <<'SQL'
+update ssid s
+  join (select ssid_hex from ssid
+         where vendor is null
+         group by ssid_hex having count(distinct wlan_sa) = 1) one
+    on one.ssid_hex = s.ssid_hex
+  left join _oui o
+    on o.oui = upper(replace(substring(s.wlan_sa, 1, 8), ':', ''))
+   set s.vendor = coalesce(o.org, '.')
+ where s.vendor is null;
+SQL
+	} > "$sqlf"
+	mysql probeprint < "$sqlf"
+	rm -f "$sqlf"
 
-		oui=$(printf '%s' "$wlan_sa" | tr -d ':' | cut -b1-6)
-		vendor=${OUI_MAP[${oui^^}]:-}
-
-		# '.' is the established "looked up, nothing found" marker; display.sh
-		# filters it out of the operator view.
-		[ -z "$vendor" ] && vendor='.'
-
-		# Single-quote the value and double any embedded quote: vendor strings
-		# come from a third-party CSV and contain apostrophes ("W. L. Gore",
-		# "O'Neil").
-		vendor=${vendor//\'/\'\'}
-
-		mysql probeprint <<< "update ssid set vendor='$vendor' where ssid_hex=\"$ssid_hex\" and wlan_sa=\"$wlan_sa\";"
-	done <<< "$(mysql -N probeprint <<< "select concat_ws('|',wlan_sa,ssid_hex) from ssid where vendor is null group by ssid_hex HAVING count(DISTINCT wlan_sa) = 1;")"
-
+	echo "  vendors resolved : $(mysql -N probeprint <<< "select count(*) from ssid where vendor is not null and vendor <> '.';")"
 	echo "mac2vendor stop $(date +"%H:%M:%S.%3N")"
 }

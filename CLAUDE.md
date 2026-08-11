@@ -66,6 +66,9 @@ mkdir -p locs                # WiGLE response cache, gitignored
 
 # geolocation (post-capture; the default path is offline)
 ./analysis-scripts/geolocate.sh           # coords from the locs/ WiGLE cache
+./analysis-scripts/geolocate.sh --csv DIR # coords from local WiGLE exports in DIR
+                                          #   (WigleWifi_*.csv[.gz]); offline, also
+                                          #   locates directed-probe BSSIDs
 ./analysis-scripts/geolocate.sh --bssids  # harvest BSSIDs from directed probes
 ./analysis-scripts/geolocate.sh --addresses # reverse geocode via Nominatim (network)
 
@@ -139,11 +142,12 @@ miss them.
 |---|---|
 | `ssid` | One row per observed probe request |
 | `ssid_intel` | One row per distinct SSID: the enrichment output |
-| `bursts` | Groups of probes emitted together |
+| `bursts` | Groups of probes emitted together. **Vestigial** — `analysis.sh` does not populate it, and nothing (display, seqgraph, enrichment) reads it; device grouping moved to `seqgraph` → `device_ssid`. Only `bursts.sh`, run by hand, writes it, and only `is_uniq` reads it back. Kept for the burst-shape research in `bursts_functions.sh`; safe to ignore for identity. |
 | `ssid_freq` | SSID → global sighting count, loaded from `lists/ssid.csv` |
 | `devices` | One row per inferred physical device |
 | `device_ssid` | **The preferred network list**: which SSIDs each device probes for |
 | `device_stage` | Scratch table the sequence graph joins through |
+| `wigle_import` | Scratch table: local WiGLE exports (`WigleWifi_*.csv[.gz]`) parsed to one row per WIFI observation, rebuilt each `geolocate.sh --csv` run |
 | `bssid_geo` | BSSIDs harvested from directed probes, and where they resolve |
 
 ### Conventions that will bite you
@@ -167,7 +171,17 @@ miss them.
   `1` no burst by MAC, `2` none by sequence, `3` none by VHT, `100` in a burst.
 - Wildcard probes arrive from tshark as the literal string `<MISSING>` and are
   stored verbatim; downstream queries filter on it.
-- `ie_fp` is a **generated** column. Do not write to it.
+- `ie_fp` is a **generated**, persistent column hashing the IE fingerprint
+  (`ht`, `extcap`, `vendor_oui`, `ie_order`, and the HT subfields `ht_ampdu`,
+  `ht_mcsset`, `txbf`, `asel`). Do not write to it. Changing its inputs means
+  changing a generated-column expression, which `add column if not exists`
+  cannot do — `build_dbs.sh` detects the stale definition and drops/recreates it.
+- **`wps_uuid` survives MAC randomization and is NOT in `ie_fp`.** The WPS
+  UUID-E is a per-device identifier (often derived from the hardware MAC), so it
+  is an instance ID, not a class feature — kept in its own column, a candidate
+  `seqgraph` union key like the static MAC. The HT subfields (`ht_ampdu`,
+  `ht_mcsset`, `txbf`, `asel`) *are* class features and are folded into `ie_fp`.
+  See FINGERPRINTING.md.
 - **`ssid_intel.score` is retained but never written.** `score()`/`bump_score()`
   were deleted; identifiability is expressed by `rarity` and `pnl_rarity`
   instead. It is also the one column that demonstrates the `ALTER` rule above in
@@ -246,14 +260,17 @@ directory beside it.
 
 ```
 capture.sh            live capture, pcap backfill, preflight and status
+start.sh              boot entry point: sets monitor mode, then runs capture.sh
 analysis.sh           every enrichment pass in dependency order
 display.sh            the operator view
 build_dbs.sh          schema of record; used by all three
-probeprint.cap        bettercap caplet -- configuration, NOT a packet capture
 
-capture-scripts/      the parse-and-insert path, plus the Pi deployment glue
+capture-scripts/      the parse-and-insert path
 analysis-scripts/     enrichment passes and the libraries they share
 display-scripts/      the operator view's queries
+platforms/            per-platform capture front ends and deployment glue
+  bettercap/          probeprint.cap caplet (config, NOT a packet capture)
+  pi/                 Raspberry Pi capture-node glue + README
 ```
 
 **Run everything from the repo root.** `lists/`, `locs/`, `logs/` and `.env`
@@ -261,15 +278,15 @@ resolve relative to the working directory, not to the script, so
 `./analysis-scripts/categorize.sh` works and `cd analysis-scripts && ./categorize.sh`
 does not.
 
-`probeprint.cap` is a **bettercap caplet** despite the extension — a config file
-that turns on `wifi.recon` and `ble.recon` and filters the event stream. It is
-tracked deliberately and holds no captured data. Install it to
-`/usr/local/share/bettercap/caplets/` on Debian or `/usr/share/bettercap/caplets/`
-on Kali. It is an alternative capture front end, separate from `capture.sh`,
-and nothing in this pipeline reads it.
+`platforms/` holds per-platform capture front ends. `platforms/bettercap/probeprint.cap`
+is a **bettercap caplet** despite the extension — a config file, not a packet
+capture, tracked deliberately and holding no captured data (see
+`platforms/bettercap/README.md`). `platforms/pi/` is the Raspberry Pi
+capture-node glue and its README. Both are alternative front ends, separate from
+`capture.sh`; nothing in the pipeline reads them.
 
 Sourced libraries have no exec bit; anything runnable does.
-`capture-scripts/pi/start_cap.sh` invokes `build_ssid.sh` by absolute path, so
+`platforms/pi/start_cap.sh` invokes `build_ssid.sh` by absolute path, so
 that distinction is load-bearing.
 
 ### Pass naming
@@ -293,9 +310,10 @@ cache.
 | File | Role |
 |---|---|
 | `ingest_functions.sh` | `PROBE_TSHARK_ARGS`, `ingest_stream` — the parse + insert loop |
-| `build_ssid.sh` | Live capture off a monitor-mode interface |
+| `build_ssid.sh` | Live capture off a monitor-mode interface (tshark straight into the DB) |
+| `build_ssid_ring.sh` | Live capture via a dumpcap ring buffer (`./capture.sh --ring`): pcap-first, so the spooled files are the system of record and a slow DB never drops frames. Archives ingested pcaps to `spool/done/`. |
 | `pcap2db.sh` | Backfill the same rows from saved captures |
-| `pi/` | Sensor deployment glue: `script.sh`, `start_cap.sh`, `start_ad.sh`. Hardcoded `/home/pi` paths, driven by cron and screen on the Pi, not called by anything here. |
+| `pi/` | Sensor deployment glue: `script.sh`, `start_cap.sh`, `start_ad.sh`, and `README.md` (USB `g_ether` networking, `@reboot` crontab, and the no-RTC/clock hazard). Hardcoded `/home/pi` paths, driven by cron and screen on the Pi, not called by anything here. |
 
 ### analysis-scripts/
 
@@ -312,7 +330,7 @@ Shared libraries:
 |---|---|
 | `ssid_intel_functions.sh` | **The monolith.** `categorize`, `check_name`, `check_airport`, `check_common`, `check_fqdn`, `check_address`, `check_language`, `check_anomalies`, `make_ignore_list`. Still to be split — see below. |
 | `location_functions.sh` | `wigle_fetch`, `summarize_one` — WiGLE fetch and jq summarization |
-| `geolocate_functions.sh` | `geo_cache_index`, `geo_from_wigle_cache`, `derive_is_oneloc`, `geo_harvest_bssids`, `geo_reverse_addresses`, `geo_google_observer`, `geo_apple_bssid` |
+| `geolocate_functions.sh` | `geo_cache_index`, `geo_from_wigle_cache`, `geo_wigle_csv_index`, `geo_from_wigle_csv`, `derive_is_oneloc`, `geo_harvest_bssids`, `geo_reverse_addresses`, `geo_google_observer`, `geo_apple_bssid` |
 | `places_functions.sh` | `places_resolve` — SSIDs naming a business, via Google Places |
 | `fidelity_functions.sh` | `fidelity_completeness`, `fidelity_by_load`, `fidelity_channels` — how much of what was transmitted got captured. Read-only |
 | `seqgraph_functions.sh` | `seqgraph_assign`, `assign_aliases` — device identity across MAC rotation |
@@ -381,7 +399,8 @@ are now stale.
 
 | Provider | Input | Answers | Status |
 |---|---|---|---|
-| **WiGLE** | SSID **or** BSSID | where that AP is | in use; `locs/` cache is read offline |
+| **WiGLE** (API cache) | SSID **or** BSSID | where that AP is | in use; `locs/` cache is read offline |
+| **WiGLE** (local exports) | SSID **and** BSSID | where that AP is | offline; `geolocate.sh --csv` reads `WigleWifi_*.csv[.gz]`, `geo_source='wigle_csv'` |
 | **Google Geolocation** | a *set* of BSSIDs | where the **observer** is | needs `GOOGLE_GEOLOCATION_KEY`, ≥2 BSSIDs |
 | **Google Places** | a venue **name** | where that venue is | needs `GOOGLE_PLACES_KEY`; billed per request |
 | **Apple** | one BSSID | that AP's position | **no public API** — ships disabled |
@@ -396,6 +415,15 @@ Two consequences that catch people out:
 - **Google locates the observer, not the network.** Given the APs you can hear
   it answers "where am I". It cannot tell you where one SSID is. For per-AP
   position the options are WiGLE, or Apple's undocumented endpoint.
+
+- **The local WiGLE exports resolve BSSIDs offline, but `is_oneloc` from them is
+  local, not global.** `geolocate.sh --csv` matches an SSID byte-for-byte
+  against the exports, so case sensitivity is free (no case-insensitive API
+  results to filter). But where the API's `geo_match_count = 1` means one
+  network *on earth* has the name, the CSV's means one AP has it *within your
+  wardrive coverage* — a weaker claim. Read a `wigle_csv` oneloc as "unique in
+  the area driven". It fills only rows an API `wigle`/`google` fix has not
+  already claimed, and stamps `geo_source='wigle_csv'` so the two never blur.
 
 - **Google Places is an inference, not a sighting.** WiGLE reports that a radio
   with this SSID was heard at a coordinate. Places reports where a *venue* of

@@ -8,6 +8,8 @@
 #
 # Usage:
 #   ./capture.sh                       live capture from $INF until interrupted
+#   ./capture.sh --ring                live capture via a dumpcap ring buffer,
+#                                      keeping the pcaps as the system of record
 #   ./capture.sh --pcap FILE [FILE...] backfill from saved captures
 #   ./capture.sh --pcap-dir DIR        backfill every *.cap/*.pcap under DIR
 #   ./capture.sh --status              what has arrived, and is anything arriving
@@ -67,7 +69,7 @@ capture_check () {
 			case "$mode" in
 				monitor) echo "monitor mode${token#$iface}" ;;
 				"")      echo "mode unknown (iw not available?)"; warn=1 ;;
-				*)       echo "in '$mode' mode, not monitor"; fail=1 ;;
+				*)       echo "in '$mode' mode, not monitor -- run ./start.sh, or: sudo airmon-ng start ${iface%mon}"; fail=1 ;;
 			esac
 		done
 	fi
@@ -128,6 +130,23 @@ Preflight failed. Fix the items marked above, or run ./capture.sh --check again.
 	exec ./capture-scripts/build_ssid.sh
 }
 
+# --- live, ring buffer -----------------------------------------------------
+#
+# Same preflight as the direct live path, plus dumpcap -- which does the actual
+# capture here, so its absence is fatal, not a warning. tshark is still required
+# because the ingest side reads the spooled files with it.
+capture_ring () {
+	capture_check || die "
+Preflight failed. Fix the items marked above, or run ./capture.sh --check again."
+	command -v dumpcap >/dev/null 2>&1 \
+		|| die "dumpcap is not installed (ships with wireshark: sudo apt-get install -y wireshark-common)."
+	echo
+	echo "Ring capture from $INF. Ctrl-C to stop."
+	echo "Frames are spooled to pcap first, then ingested; run ./analysis.sh to enrich them."
+	echo
+	exec ./capture-scripts/build_ssid_ring.sh
+}
+
 # --- backfill --------------------------------------------------------------
 capture_pcap () {
 	[ $# -gt 0 ] || die "usage: $0 --pcap <capture.pcap> [more.pcap ...]"
@@ -149,6 +168,7 @@ capture_pcap_dir () {
 
 case "${1:-}" in
 	"")          capture_live ;;
+	--ring)      capture_ring ;;
 	--check)     capture_check ;;
 	--status)    capture_status ;;
 	--pcap)      shift; capture_pcap "$@" ;;
@@ -156,5 +176,5 @@ case "${1:-}" in
 	# Print the header comment and stop at the first line of code, so the help
 	# text cannot drift from the file and cannot run past it either.
 	-h|--help)   awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0" ;;
-	*)           die "usage: $0 [--pcap FILE...|--pcap-dir DIR|--status|--check]" ;;
+	*)           die "usage: $0 [--ring|--pcap FILE...|--pcap-dir DIR|--status|--check]" ;;
 esac

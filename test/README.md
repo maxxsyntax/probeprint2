@@ -39,6 +39,8 @@ If the daemon is not running: `sudo systemctl start docker`.
 | `17_places` | Google Places name lookup: exact match after normalizing router decoration, near-miss names refused, chain names left unplaced, SSIDs WiGLE already placed never queried, refusal without a key, `--dry-run` sends nothing |
 | `18_fidelity` | Capture completeness from sequence numbers: known-hole fixtures, 12-bit counter wrap, retransmissions excluded, idle gaps and delta-too-large reported separately, channel-coverage warning, and that the pass writes nothing |
 | `19_capture` | The capture entry point: pcap backfill through the same ingest as live capture, `--pcap-dir`, status telling quiet apart from not-running, preflight refusing an unset or missing interface, and that neither `--check` nor `--status` writes |
+| `20_cracked` | SSIDs whose WPA key is publicly known (`lists/cracked.txt`): flagged, case-sensitively, separators in the name handled, incremental leaves decided rows alone, `--recompute` corrects, and rare cracked networks surface as soft targets while common ones do not |
+| `21_wigle_csv` | Offline location lookup from local WiGLE exports (`WigleWifi_*.csv[.gz]`): definitive/clustered/dispersed outcomes, exact-byte (case-sensitive) SSID join, a comma inside an SSID parsed right-anchored, gzipped CRLF files read, directed-probe BSSIDs located, and an API `wigle` fix never overwritten |
 
 ## Rules
 

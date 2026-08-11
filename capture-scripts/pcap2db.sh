@@ -82,8 +82,13 @@ for capture in "$@"; do
 
 	# Straight pipe, rather than the old detour through a hardcoded
 	# /usr/src/probeprint/pipe fifo that existed only on the author's machine.
+	#
+	# ENGAGEMENT is cleared for the ingest so rows land with a NULL tag; the
+	# per-file UPDATE below then tags them with the pcap name. Otherwise, if
+	# .env set ENGAGEMENT, the insert would tag them with it and the
+	# `where tag is null` update would match nothing -- losing the filename.
 	tshark -Qr "$capture" -Y "$PROBE_FILTER" "${PROBE_TSHARK_ARGS[@]}" 2>/dev/null \
-		| ingest_stream "${DB_ARGS[@]}"
+		| ENGAGEMENT= ingest_stream "${DB_ARGS[@]}"
 
 	# Tag the rows this file contributed. The previous version issued this as a
 	# `sqlite3 new.db` update -- a leftover from before the MariaDB migration --

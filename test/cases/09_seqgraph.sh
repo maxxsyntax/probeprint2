@@ -146,5 +146,90 @@ SEQGRAPH_ALPHA=10 SEQGRAPH_GATE_IE=0 ./analysis-scripts/seqgraph.sh --recompute 
 assert_eq "a 10s alpha splits the chain back into 3 devices" "3" \
     "$(sq1 "select count(distinct device_id) from ssid where wlan_sa in ('12:00:00:00:00:01','36:00:00:00:00:02','5a:00:00:00:00:03');")"
 
+# --- WPS UUID-E unions across randomization, even when nothing else links --
+# The UUID-E is a persistent per-device identifier that survives MAC rotation,
+# so two frames with different randomized MACs and the same UUID-E must be one
+# device -- as strong as a static MAC. Make the two frames impossible to link
+# any other way: different randomized MACs, far apart in time (beyond ALPHA),
+# sequence numbers that do not chain. Only the shared UUID-E can join them.
+mysql probeprint -e "delete from ssid where ssid_hex=lower(hex('WpsNet'));"
+mysql probeprint -e "delete from ssid where ssid_hex=lower(hex('WpsOther'));"
+mysql probeprint -e "insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht,wps_uuid) values
+  (lower(hex('WpsNet')),'6a:00:00:00:00:01','1700200000.000000','-50',2437,10,'0x1','abc123-uuid-e'),
+  (lower(hex('WpsNet')),'7e:00:00:00:00:02','1700209999.000000','-50',2437,4000,'0x1','abc123-uuid-e'),
+  (lower(hex('WpsOther')),'8a:00:00:00:00:03','1700400000.000000','-50',2437,2000,'0x1','different-uuid');"
+./analysis-scripts/seqgraph.sh --recompute >/dev/null 2>&1
+assert_eq "two randomized MACs sharing a WPS UUID-E are one device" "1" \
+    "$(sq1 "select count(distinct device_id) from ssid where ssid_hex=lower(hex('WpsNet'));")"
+assert_eq "and that device spans both randomized MACs" "2" \
+    "$(sq1 "select count(distinct wlan_sa) from ssid where ssid_hex=lower(hex('WpsNet'));")"
+# A different UUID-E must NOT be pulled into that device.
+wdev=$(sq1 "select distinct device_id from ssid where wlan_sa='6a:00:00:00:00:01';")
+assert_eq "a different UUID-E is not merged in" "0" \
+    "$(sq1 "select count(*) from ssid where device_id='$wdev' and wps_uuid='different-uuid';")"
+
+# An empty UUID-E is not an identifier and must never union frames.
+mysql probeprint -e "delete from ssid where ssid_hex=lower(hex('NoWps'));"
+mysql probeprint -e "insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht,wps_uuid) values
+  (lower(hex('NoWps')),'9a:00:00:00:00:01','1700300000.000000','-50',2437,10,'0x1',NULL),
+  (lower(hex('NoWps')),'ae:00:00:00:00:02','1700309999.000000','-50',2437,4000,'0x1',NULL);"
+./analysis-scripts/seqgraph.sh --recompute >/dev/null 2>&1
+assert_eq "two unlinkable frames with no UUID-E stay separate" "2" \
+    "$(sq1 "select count(distinct device_id) from ssid where ssid_hex=lower(hex('NoWps'));")"
+
+# --- incremental grouping re-joins returning devices, does not fragment ---
+# The default (non-recompute) pass groups only new (device_id null) frames, but
+# a returning device must land on its EXISTING id, not a fresh one. Start clean.
+reset_db
+./analysis-scripts/seqgraph.sh --recompute >/dev/null 2>&1
+
+# (a) A returning STATIC MAC. Grouped in the first pass; a new frame from the
+#     same burned-in MAC arrives later and must join the same device.
+staticdev=$(sq1 "select distinct device_id from ssid where wlan_sa='00:11:22:00:00:01';")
+mysql probeprint -e "insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht) values
+  (lower(hex('StaticReturn')),'00:11:22:00:00:01','1700500000.000000','-50',2437,900,'0x1');"
+./analysis-scripts/seqgraph.sh >/tmp/inc1.log 2>&1        # incremental
+assert_eq "a returning static MAC re-joins its existing device" "$staticdev" \
+    "$(sq1 "select device_id from ssid where ssid_hex=lower(hex('StaticReturn'));")"
+
+# (b) A returning WPS UUID-E. New randomized MAC, days later, unlinkable by
+#     time/seq -- only the shared UUID-E ties it to the earlier device.
+mysql probeprint -e "insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht,wps_uuid) values
+  (lower(hex('UuidSeed')),'c2:00:00:00:00:01','1700510000.000000','-50',2437,5,'0x1','ret-uuid-1');"
+./analysis-scripts/seqgraph.sh >/dev/null 2>&1
+uuiddev=$(sq1 "select distinct device_id from ssid where ssid_hex=lower(hex('UuidSeed'));")
+mysql probeprint -e "insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht,wps_uuid) values
+  (lower(hex('UuidReturn')),'d6:00:00:00:00:02','1700600000.000000','-50',2437,3000,'0x1','ret-uuid-1');"
+./analysis-scripts/seqgraph.sh >/dev/null 2>&1
+assert_eq "a returning WPS UUID-E re-joins its existing device" "$uuiddev" \
+    "$(sq1 "select device_id from ssid where ssid_hex=lower(hex('UuidReturn'));")"
+
+# (c) A burst continuing within ALPHA of an already-grouped frame joins that
+#     device via the lookback tail, not a new id.
+base=$(sq1 "select distinct device_id from ssid where wlan_sa='12:00:00:00:00:01';")
+# Continue from the device's actual last frame: 30s later (< ALPHA) and a small
+# forward step in sequence (< BETA), with the same IE fingerprint.
+lastt=$(sq1 "select max(cast(time as decimal(20,7))) from ssid where device_id='$base';")
+predseq=$(sq1 "select seq from ssid where device_id='$base' order by cast(time as decimal(20,7)) desc limit 1;")
+cont=$(printf '%.6f' "$(echo "$lastt + 30" | bc)")
+contseq=$(( predseq + 10 ))
+# No IE columns: an empty IE fingerprint is never blocked by the gate, so the
+# frame chains on time+sequence alone. (ie_fp is a generated column and cannot
+# be inserted into anyway.)
+mysql probeprint -e "insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht) values
+  (lower(hex('RoamHome')),'12:00:00:00:00:01','$cont','-50',2437,$contseq,'0x1');"
+./analysis-scripts/seqgraph.sh >/dev/null 2>&1
+assert_eq "a burst continuing within ALPHA joins the recent device" "$base" \
+    "$(sq1 "select device_id from ssid where ssid_hex=lower(hex('RoamHome')) and time='$cont';")"
+
+# (d) A genuinely unrelated new frame gets its OWN new device, not merged.
+before_devs=$(sq1 "select count(*) from devices;")
+mysql probeprint -e "insert into ssid (ssid_hex,wlan_sa,time,rssi,freq,seq,vht) values
+  (lower(hex('Stranger')),'fa:00:00:00:00:09','1700900000.000000','-50',2437,50,'0x1');"
+./analysis-scripts/seqgraph.sh >/dev/null 2>&1
+assert_eq "an unrelated new frame gets its own id" "1" \
+    "$(sq1 "select count(*) > 0 from ssid where ssid_hex=lower(hex('Stranger')) and device_id is not null;")"
+assert_eq "and does not join any pre-existing device" "1" \
+    "$(sq1 "select count(distinct device_id) from ssid where ssid_hex=lower(hex('Stranger'));")"
 
 finish

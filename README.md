@@ -60,6 +60,27 @@ interface); leave `online=0` unless you want live lookups during capture.
 `.env.example` documents every option, including geolocation, sequence-graph
 tuning, and engagement-specific targeting.
 
+### Tagging observations by source
+
+Every row in `ssid` carries an optional `tag` recording where it came from, so a
+database that accumulates several engagements — or mixes live capture with
+imported pcaps — can be sliced back apart:
+
+```sql
+select * from ssid where tag = 'acme-red-team-2026';
+```
+
+Two ways it gets set, both optional:
+
+- **Live capture** tags rows with the `ENGAGEMENT` name from `.env`. Set it per
+  engagement; leave it unset and live rows are tagged `NULL`.
+- **`pcap2db.sh` backfill** tags each row with the **pcap filename** it came
+  from, regardless of `ENGAGEMENT` — the file is the source of record for
+  imported data.
+
+The field is free-form and never required; nothing downstream depends on it. It
+exists purely so a merged collection stays separable by provenance.
+
 ## HOW TO
 
 Run everything from the repo root.
@@ -70,6 +91,9 @@ Run everything from the repo root.
 
 # 2a. live capture (interface must already be in monitor mode)
 ./capture.sh                     # preflight, then live capture
+# 2a'. or let start.sh set monitor mode up first, then capture -- this is the
+#      crontab/@reboot entry point for an unattended node (needs root)
+sudo ./start.sh
 # 2b. or backfill from saved captures instead
 ./capture.sh --pcap capture1.pcap capture2.pcap
 ./capture.sh --pcap-dir ../wifi_research/caps
@@ -194,11 +218,51 @@ Method: Schulman, Levin & Spring, *On the Fidelity of 802.11 Packet Traces*,
 PAM 2008 — <http://www.cs.umd.edu/projects/wifidelity/>. The thresholds used
 here are ours; see `analysis-scripts/fidelity_functions.sh`.
 
+## Pulling WiGLE locations after an engagement
+
+Capture runs offline (`online=0`), so no SSID is sent to WiGLE while you are in
+the field — that would be egress during collection. Geolocation is a deliberate
+**post-engagement** step, run when you are back on a network you are willing to
+query from.
+
+The location data flows through a cache, so it is a two-stage process:
+
+```
+# 1. FETCH: send unlocated SSIDs to WiGLE, cache the JSON responses, summarize.
+#    Rarest-first, so the names that identify a person are spent on before the
+#    daily quota runs out; common SSIDs are skipped (they place nobody).
+./analysis-scripts/online_wigle_fetch.sh --new           # stops when quota is hit
+./analysis-scripts/online_wigle_fetch.sh --new --limit 50 # just the 50 most identifying
+./analysis-scripts/online_wigle_fetch.sh --new --wait     # block through quota windows, grind
+
+# 2. RESOLVE: turn the cached responses into coordinates and a one-location
+#    verdict. Offline -- reads the cache, makes no calls.
+./analysis-scripts/geolocate.sh
+./analysis-scripts/oneloc.sh
+```
+
+Notes:
+
+- **The quota is the constraint, not the corpus.** WiGLE allows a few hundred
+  lookups a day on the free tier, and a real capture has tens of thousands of
+  unlocated SSIDs — so it takes many days, and the *order* matters. `--new`
+  sends the rarest, most recently seen networks first (see the fetch script for
+  the ranking) and skips `is_common` ones. Run it daily, or `--wait` it
+  unattended.
+- **Point `GEO_LOCS_DIR` at your cache.** The response cache lives wherever
+  `GEO_LOCS_DIR` says (`wifi_research/locs` in this workspace). Set it in `.env`
+  so fetch, geolocate and the summarizer all agree; otherwise they default to
+  `./locs`.
+- **Re-running is free.** Both stages are idempotent and cache-backed — an SSID
+  already fetched is never fetched again, and geolocate only re-reads the cache.
+- For SSIDs WiGLE cannot place because nobody wardrove them but which *name* a
+  venue, see the Google Places step below.
+
 ## Placing SSIDs that name a business
 
 WiGLE can only place an SSID somebody drove past with a radio. Everything else
 is a name with no location attached, and on a real collection that is the large
-majority. But an SSID like `Tortillas Alizze` names a venue, and the venue is on
+majority. But an SSID like `Cafe Marguerite` names a venue, and the venue is on
 the map whether or not anyone ever wardrove it.
 
 `analysis-scripts/online_places.sh` looks those names up through the **Google Places API** and
@@ -222,7 +286,7 @@ key the pass refuses to start rather than silently doing nothing.
 WiGLE reports an **observation** — a radio broadcasting this SSID was heard at
 these coordinates. Places reports where a **venue of that name is**, which only
 becomes a person's location if the SSID really is that venue's network. It is a
-good inference for `Tortillas Alizze` and a bad one for a household that named
+good inference for `Cafe Marguerite` and a bad one for a household that named
 its router after a favorite restaurant.
 
 So the two are kept apart. Results are written with `geo_source='google_places'`;
@@ -246,9 +310,9 @@ then compared exactly:
 
 | SSID | normalized | result |
 |---|---|---|
-| `Tortillas Alizze` | `tortillasalizze` | matches |
-| `TortillasAlizze_5G` | `tortillasalizze` | matches — same venue |
-| `Tortillas Alizze Guest` | `tortillasalizze` | matches — same venue |
+| `Cafe Marguerite` | `cafemarguerite` | matches |
+| `CafeMarguerite_5G` | `cafemarguerite` | matches — same venue |
+| `Cafe Marguerite Guest` | `cafemarguerite` | matches — same venue |
 | `Tortilleria Alice` | `tortilleriaalice` | **refused** |
 
 A name shared by several distant venues — a chain — yields no coordinates at
@@ -398,6 +462,12 @@ Configure hosapd.conf
 add to /home/pi/
 script.sh
 start_cap.sh
+
+**Full capture-node setup — USB-gadget networking (`g_ether`), the `@reboot`
+crontab entry, and why an accurate clock is critical on a Pi with no RTC — is in
+[platforms/pi/README.md](platforms/pi/README.md).** Read the time
+section before deploying: a node that captures before its clock is set corrupts
+`ssid.time`, which is the primary key, and poisons every time-based pass.
 
 
 

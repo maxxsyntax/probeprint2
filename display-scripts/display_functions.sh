@@ -196,10 +196,28 @@ display_inrange () {
 	      lang market places airports travel eatery rare cracked macs last_prior
 	local shown=0
 
+	local quiet=0 quiet_near=""
 	while IFS=$'\037' read -r id alias conf vendor rssi pnl rarity names household \
 	                          employer lang market places airports travel eatery rare cracked macs last_prior; do
 		[ -z "$id" ] && continue
 		shown=$((shown + 1))
+
+		# A device that has probed no usable network -- empty PNL, zero
+		# identifiability, and nothing the enrichment surfaced -- has nothing to
+		# put in a dossier. Rendering a full block for it (a header and a bare
+		# "Preferred nets: 0, identifiability 0") is noise, and on a real capture
+		# these are the majority. But they must not vanish: the operator needs to
+		# see that signal is arriving, so they are counted and the nearest is
+		# named in a one-line summary after the dossiers, rather than dropped.
+		if [ "${pnl:-0}" -le 0 ] 2>/dev/null && [ "${rarity:-0}" -le 0 ] 2>/dev/null \
+		   && [ -z "$names$household$employer$lang$market$places$airports$travel$eatery$rare$cracked" ]; then
+			quiet=$((quiet + 1))
+			if [ -z "$quiet_near" ]; then
+				local band; band=$(rssi_range "$rssi")
+				quiet_near="$alias${band:+ [$band]}"
+			fi
+			continue
+		fi
 
 		# --- DEVICE line first ------------------------------------------------
 		# The header is the DEVICE, not the subject. An earlier version led with
@@ -253,6 +271,18 @@ display_inrange () {
 		[ -n "$rare" ]      && printf '  Notable nets : %s\n' "$rare"
 		printf '\n'
 	done <<< "$(device_profile_rows "$cutoff")"
+
+	# The quiet devices, as one reassuring line rather than pages of empty blocks.
+	# Proof that signal is flowing even when nobody in range is broadcasting a
+	# usable network name.
+	if [ "$quiet" -gt 0 ]; then
+		if [ "$quiet" -eq 1 ]; then
+			printf '+ 1 device in range probing no usable networks (%s)\n\n' "$quiet_near"
+		else
+			printf '+ %s devices in range probing no usable networks (nearest: %s)\n\n' \
+			       "$quiet" "$quiet_near"
+		fi
+	fi
 
 	# Everything above is keyed on devices, so a frame whose device_id is still
 	# null cannot appear in it however strong the signal. seqgraph is a batch

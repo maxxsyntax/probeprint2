@@ -39,7 +39,7 @@ case "${1:-}" in
 			else
 				queried=$((queried+1))
 				[ "$queried" -le 25 ] && \
-					printf '  QUERY  %-38s -> %s\n' "$ssid" "$(places_normalize "$ssid")"
+					printf '  QUERY  %-38s -> %s\n' "$ssid" "$(places_query "$ssid")"
 			fi
 		done < <(places_candidate_sql "${2:-200}" | mysql -N probeprint)
 

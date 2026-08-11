@@ -462,6 +462,240 @@ SQL
 }
 
 # ---------------------------------------------------------------------------
+# WiGLE, from the bulk exports. No network access.
+# ---------------------------------------------------------------------------
+#
+# The offline counterpart to the locs/ cache above. Where that cache is per-SSID
+# JSON fetched from the WiGLE API, these are the raw wardrive files the WiGLE
+# phone app writes (WigleWifi_*.csv[.gz]) -- the same observations, in bulk,
+# needing no API call and no quota. One export covers wherever the operator has
+# driven; the API covers the world. They complement each other, so this runs as
+# a peer provider and records geo_source='wigle_csv' to keep the two apart.
+#
+# WIGLE_CSV_DIR points at the exports, exactly as GEO_LOCS_DIR points at the
+# cache: a relative default the operator overrides in .env or on the command
+# line (./analysis-scripts/geolocate.sh --csv <dir>).
+WIGLE_CSV_DIR=${WIGLE_CSV_DIR:-wigle_csv}
+
+# geo_wigle_csv_index [dir]
+#
+# Parse every WigleWifi_*.csv[.gz] export under `dir` into the wigle_import
+# table -- one row per WIFI observation as (ssid_hex, bssid, lat, lon). Rebuilt
+# from scratch each call (truncate then load), so it is idempotent. Returns 1
+# if the directory holds no exports.
+#
+# The WiGLE CSV has a fixed 14-column layout after a one-line app-info preamble:
+#   MAC,SSID,AuthMode,FirstSeen,Channel,Frequency,RSSI,Lat,Lon,Alt,Acc,RCOIs,
+#   MfgrId,Type
+# An SSID may contain a comma, which would shift every column after it if fields
+# were counted from the left. They are counted from the RIGHT instead -- Type is
+# the last field, Lon the sixth-from-last, Lat the seventh -- so a comma inside
+# the SSID never moves the coordinate columns. The SSID is then whatever lies
+# between column 2 and the fixed trailing block, rejoined.
+#
+# The SSID is hex-encoded in awk with the same byte->lowercase-hex scheme the
+# rest of the pipeline uses, so the join to ssid_intel.ssid_hex below is exact
+# both in bytes and in case for free -- no separate case handling, unlike the
+# API path, because the API returns case-insensitive matches and a raw export
+# does not. LC_ALL=C so awk treats SSID bytes as bytes; SSIDs are routinely not
+# valid UTF-8.
+geo_wigle_csv_index () {
+	local dir=${1:-$WIGLE_CSV_DIR}
+	[ -d "$dir" ] || { echo "  no such directory: $dir" >&2; return 1; }
+
+	local -a files=()
+	local f
+	for f in "$dir"/WigleWifi_*.csv "$dir"/WigleWifi_*.csv.gz; do
+		[ -f "$f" ] && files+=("$f")
+	done
+	[ "${#files[@]}" -gt 0 ] || { echo "  no WigleWifi_*.csv[.gz] under $dir" >&2; return 1; }
+	echo "  indexing ${#files[@]} WiGLE export(s) from $dir"
+
+	mysql probeprint <<'SQL'
+create table if not exists wigle_import (
+  ssid_hex varchar(255),
+  bssid    varchar(17),
+  lat      double,
+  lon      double,
+  key idx_wigle_ssid  (ssid_hex),
+  key idx_wigle_bssid (bssid)
+) character set utf8mb4 collate utf8mb4_general_ci;
+truncate table wigle_import;
+SQL
+
+	# Decompress .gz, cat the rest, all into one awk pass that emits batched
+	# INSERTs (the seqgraph pattern: far fewer statements than one INSERT/row).
+	{
+		for f in "${files[@]}"; do
+			case "$f" in
+				*.gz) gzip -dc -- "$f" 2>/dev/null ;;
+				*)    cat -- "$f" ;;
+			esac
+		done
+	} | LC_ALL=C awk '
+	BEGIN {
+		FS = ","
+		for (i = 0; i < 256; i++) ord[sprintf("%c", i)] = i
+		split("0 1 2 3 4 5 6 7 8 9 a b c d e f", hx, " ")
+		batch = 0
+	}
+	function tohex(s,   out, i, c) {
+		out = ""
+		for (i = 1; i <= length(s); i++) {
+			c = ord[substr(s, i, 1)]
+			out = out hx[int(c / 16) + 1] hx[(c % 16) + 1]
+		}
+		return out
+	}
+	{ sub(/\r$/, "") }                 # WiGLE app exports are CRLF
+	$NF != "WIFI" { next }             # WIFI rows only; also skips both header lines
+	NF >= 14 {
+		mac = $1
+		lat = $(NF - 6); lon = $(NF - 5)
+		# The SSID is always hex-encoded below, so it cannot inject anything into
+		# the INSERT. mac and lat/lon are emitted raw, though, so a corrupt export
+		# line -- WiGLE files do contain the occasional garbage row, some carrying
+		# a raw NUL byte that MySQL rejects outright -- must be shape-checked here.
+		# A real MAC is hex and colons; a real coordinate is a decimal number.
+		if (mac !~ /^[0-9a-fA-F:]+$/) next
+		if (lat !~ /^-?[0-9]+\.?[0-9]*$/) next
+		if (lon !~ /^-?[0-9]+\.?[0-9]*$/) next
+		# SSID is columns 2 .. NF-12, rejoined (a comma inside it survives).
+		ssid = $2
+		for (i = 3; i <= NF - 12; i++) ssid = ssid FS $i
+		if (ssid == "") next           # hidden/wildcard export row: nothing to key on
+		if (batch % 1000 == 0) {
+			if (batch > 0) print ";"
+			printf "insert into wigle_import (ssid_hex,bssid,lat,lon) values "
+		} else printf ","
+		printf "(\"%s\",\"%s\",%s,%s)", tohex(ssid), mac, lat, lon
+		batch++
+	}
+	END { if (batch > 0) print ";" }
+	' | mysql probeprint
+
+	local n
+	n=$(mysql -N probeprint <<< "select count(*) from wigle_import;")
+	echo "  loaded $n WIFI observation(s)"
+	[ "${n:-0}" -gt 0 ]
+}
+
+# geo_from_wigle_csv [--recompute] [dir]
+#
+# Resolve ssid_intel coordinates (and directed-probe BSSIDs in bssid_geo) from
+# the local WiGLE exports, entirely offline. Same resolution rules as
+# geo_from_wigle_cache: count the distinct access points carrying the exact
+# name, and record a fix only when they name one place, or cluster within
+# ~0.01 degrees (~1km). Recorded as geo_source='wigle_csv'.
+#
+# geo_match_count here is the number of distinct BSSIDs with the exact SSID --
+# i.e. how many physical APs carry the name in the export. One AP is the
+# definitive case, as with the API path's single exact-case result.
+#
+# CAVEAT on is_oneloc. For the API path geo_match_count=1 means one network on
+# EARTH has the name (WiGLE's global database). Here it means one AP has it in
+# YOUR export's coverage -- a weaker claim. Read a wigle_csv oneloc as "unique
+# within the wardriven area", not globally unique.
+geo_from_wigle_csv () {
+	local recompute="" import="" dir="" a
+	for a in "$@"; do
+		case "$a" in
+			--recompute) recompute=1 ;;
+			--import)    import=1 ;;
+			*)           dir=$a ;;
+		esac
+	done
+
+	echo "geo_from_wigle_csv start $(date +"%H:%M:%S.%3N")"
+
+	if ! geo_wigle_csv_index "${dir:-$WIGLE_CSV_DIR}"; then
+		echo "  no WiGLE exports to index -- point WIGLE_CSV_DIR (or the --csv arg)"
+		echo "  at a directory of WigleWifi_*.csv[.gz] files."
+		echo "geo_from_wigle_csv stop $(date +"%H:%M:%S.%3N")"
+		return 0
+	fi
+
+	# --import: seed ssid_intel with the export SSIDs that actually resolve to a
+	# place, so an SSID wardriven but never (yet) probed for is still on file with
+	# its coordinates. This is the CSV analogue of geo_import_locs_cache, and the
+	# same reasoning: an export is intel worth keeping even when nothing in the
+	# current capture points at it. Only the locatable ones are loaded -- a
+	# dispersed common name like xfinitywifi would add a bare, locationless row.
+	# The UPDATE below then fills the coordinates for these new rows too, since
+	# they arrive with a null lat and satisfy the incremental guard.
+	if [ -n "$import" ]; then
+		mysql probeprint <<'SQL'
+insert ignore into ssid_intel (ssid_hex)
+select ssid_hex from (
+    select ssid_hex,
+           count(distinct bssid) as ap_count,
+           (max(lat) - min(lat)) as latsp,
+           (max(lon) - min(lon)) as lonsp
+      from wigle_import
+     group by ssid_hex ) g
+ where g.ap_count = 1 or (g.latsp <= 0.01 and g.lonsp <= 0.01);
+SQL
+	fi
+
+	# Guards mirror geo_from_wigle_cache. Incremental fills only never-examined
+	# rows; recompute redoes the rows this provider owns (or that nothing has
+	# resolved), never clobbering a more authoritative API 'wigle'/'google' fix.
+	local guard="and (si.lat is null or si.lon is null) and si.geo_match_count is null"
+	local bguard="and b.lat is null"
+	if [ -n "$recompute" ]; then
+		guard="and (si.geo_source is null or si.geo_source = 'wigle_csv')"
+		bguard="and (b.geo_source is null or b.geo_source = 'wigle_csv')"
+	fi
+
+	# The whole SSID resolution in one UPDATE join. The subquery collapses the
+	# export to one row per SSID: how many distinct APs carry it, how far they
+	# spread, and their centroid. geo_match_count is always recorded; a fix
+	# (lat/lon/geo_source) only when one AP carries the name or they cluster.
+	mysql probeprint <<SQL
+update ssid_intel si
+  join ( select ssid_hex,
+                count(distinct bssid) as ap_count,
+                (max(lat) - min(lat)) as latsp,
+                (max(lon) - min(lon)) as lonsp,
+                avg(lat) as alat, avg(lon) as alon
+           from wigle_import
+          group by ssid_hex ) w
+    on w.ssid_hex = si.ssid_hex
+   set si.geo_match_count = w.ap_count,
+       si.lat = case when w.ap_count = 1 or (w.latsp <= 0.01 and w.lonsp <= 0.01)
+                     then w.alat else si.lat end,
+       si.lon = case when w.ap_count = 1 or (w.latsp <= 0.01 and w.lonsp <= 0.01)
+                     then w.alon else si.lon end,
+       si.geo_source = case when w.ap_count = 1 or (w.latsp <= 0.01 and w.lonsp <= 0.01)
+                     then 'wigle_csv' else si.geo_source end
+ where 1=1 $guard;
+SQL
+
+	# BSSIDs are the offline path's bonus. An export maps a hardware address
+	# straight to a position -- the per-AP lookup no other offline provider can
+	# do (WiGLE's SSID search cannot, Google locates the observer, Apple has no
+	# public API). A BSSID is one physical AP, so its observations cluster;
+	# average them, and record a fix only if they actually do (a roaming/mobile
+	# AP with a wandering address would not).
+	mysql probeprint <<SQL
+update bssid_geo b
+  join ( select lower(bssid) as bssid,
+                avg(lat) as alat, avg(lon) as alon,
+                (max(lat) - min(lat)) as latsp,
+                (max(lon) - min(lon)) as lonsp
+           from wigle_import
+          group by lower(bssid) ) w
+    on w.bssid = lower(b.bssid)
+   set b.lat = w.alat, b.lon = w.alon, b.geo_source = 'wigle_csv'
+ where w.latsp <= 0.01 and w.lonsp <= 0.01 $bguard;
+SQL
+
+	echo "  SSIDs fixed from exports  : $(mysql -N probeprint <<< "select count(*) from ssid_intel where geo_source='wigle_csv';")"
+	echo "  BSSIDs fixed from exports : $(mysql -N probeprint <<< "select count(*) from bssid_geo where geo_source='wigle_csv';")"
+	echo "geo_from_wigle_csv stop $(date +"%H:%M:%S.%3N")"
+}
+
+# ---------------------------------------------------------------------------
 # Nominatim: coordinates -> street address.
 # ---------------------------------------------------------------------------
 

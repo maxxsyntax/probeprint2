@@ -9,6 +9,12 @@
 #   ./analysis-scripts/geolocate.sh                 offline only: coordinates from the
 #                                             locs/ WiGLE cache. Safe default,
 #                                             no network calls at all.
+#   ./analysis-scripts/geolocate.sh --csv [dir]     offline: coordinates from local WiGLE
+#                                             exports (WigleWifi_*.csv[.gz]) in
+#                                             dir (default WIGLE_CSV_DIR). Also
+#                                             locates directed-probe BSSIDs.
+#                                             Add --import to also load locatable
+#                                             export SSIDs into ssid_intel.
 #   ./analysis-scripts/geolocate.sh --addresses [n] reverse geocode via Nominatim
 #                                             (network, 1 req/sec, default 500)
 #   ./analysis-scripts/geolocate.sh --bssids        harvest BSSIDs from directed probes
@@ -33,6 +39,13 @@ case "${1:-}" in
 		;;
 	--import-cache)
 		geo_import_locs_cache
+		;;
+	--csv)
+		# Offline resolution from the local WiGLE exports. Remaining args are an
+		# optional directory and/or --recompute, both understood by the function.
+		shift
+		geo_from_wigle_csv "$@"
+		geo_report
 		;;
 	--bssids)
 		geo_harvest_bssids

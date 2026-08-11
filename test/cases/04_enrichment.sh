@@ -111,6 +111,13 @@ assert_eq "SingleMacNet not flagged as common" "0" \
 ./analysis-scripts/mac2vendor.sh >/tmp/vendor.log 2>&1
 assert_contains "OUI 00:1a:11 resolves to Google" "Google" \
     "$(sq1 "select vendor from ssid where wlan_sa='00:1a:11:00:00:01';")"
+# The batched form loads OUIs into a temp table and joins it to ssid. That temp
+# table must carry ssid's collation, or the join throws ERROR 1267 (illegal mix
+# of collations) and the whole UPDATE silently writes nothing -- which is how
+# the pass was broken on the merged collection.
+assert_not_contains "mac2vendor runs without a collation error" \
+    "1267" "$(cat /tmp/vendor.log)"
+assert_not_contains "and no SQL error at all" "ERROR" "$(cat /tmp/vendor.log)"
 
 # --- make_ignore_list ----------------------------------------------------
 ./analysis-scripts/make_ignore.sh >/tmp/ignore.log 2>&1

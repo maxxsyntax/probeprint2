@@ -20,6 +20,7 @@ supersedes (see *Run on boot* below).
 | `script.sh` | `@reboot` entry point. Starts `start_cap.sh` in a detached `screen`. |
 | `start_cap.sh` | Brings `wlan1` into monitor mode (`airmon-ng`) and runs `build_ssid.sh`. |
 | `start_ad.sh` | Optional channel-hopping `airodump-ng`, off by default. |
+| `hotspot.interfaces`, `net_up.sh` | Field networking when the **operator's phone is the hotspot** (not the node's own AP): the Pi joins over `wlan0`, steps its clock off the phone, and opens a reverse SSH tunnel so ConnectBot reaches it at the phone's `localhost` despite the phone re-rolling its subnet. See **[NETWORKING.md](./NETWORKING.md)**. |
 
 ---
 
@@ -177,6 +178,14 @@ No wired connection and no separate laptop running the analysis -- the board
 captures, enriches, and shows the dossier by itself, and the operator just views
 it. Note the capture radio (monitor mode) and the hostapd AP must be **different
 interfaces**: one card cannot serve an AP and sniff in monitor mode at once.
+
+**Alternative: the operator's phone is the hotspot, not the node.** When the
+phone provides the network (and its cellular is the only internet), the node
+joins the phone instead of hosting an AP, and reaches the operator by a reverse
+SSH tunnel — the phone re-rolls its subnet every session, so the node cannot be
+addressed directly. That topology, plus the Termux/ConnectBot phone setup and
+using the phone as an NTP server, is documented in
+**[NETWORKING.md](./NETWORKING.md)**.
 
 The older `script.sh` / `start_cap.sh` pair in this directory did a subset of
 this by hand (a detached `screen` running `start_cap.sh`, which ran

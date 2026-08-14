@@ -1,0 +1,31 @@
+# Pi -> phone hotspot join, for /etc/network/interfaces.d/wlan0
+#
+# Onboard wlan0 is used ONLY to join the phone's hotspot and pull a DHCP lease.
+# Capture stays on the USB radio (wlan1 -> wlan1mon), so monitor mode never
+# fights connectivity. The phone re-rolls its hotspot subnet on every toggle,
+# so nothing here hardcodes an address -- we take DHCP and reach the phone by
+# whatever it hands us as the default gateway. net_up.sh does the rest.
+#
+# Install (both Pis, identical):
+#   sudo apt install ifupdown wpasupplicant autossh ntpdate
+#   sudo cp hotspot.interfaces /etc/network/interfaces.d/wlan0
+#   sudo cp net_up.sh /usr/local/sbin/net_up.sh && sudo chmod +x /usr/local/sbin/net_up.sh
+#   grep -q 'interfaces.d' /etc/network/interfaces || \
+#     echo 'source /etc/network/interfaces.d/*' | sudo tee -a /etc/network/interfaces
+# On Raspberry Pi OS Bookworm, NetworkManager owns wlan0 by default -- either
+# stop it (sudo systemctl disable --now NetworkManager) or mark wlan0 unmanaged,
+# or ifupdown and NM will fight over the interface.
+#
+# Replace the SSID/PSK below. Pre-hash the PSK if you prefer not to store it in
+# the clear:  wpa_passphrase "YourHotspot" | grep -w psk   (use the hex value).
+# Then:  sudo chmod 600 /etc/network/interfaces.d/wlan0
+
+allow-hotplug wlan0
+iface wlan0 inet dhcp
+    wpa-ssid "YourHotspotName"
+    wpa-psk "YourHotspotPassword"
+    # Bring up the clock + reverse tunnel each time wlan0 comes up (new gateway
+    # every session). Backgrounded so ifup does not block on the long-lived
+    # autossh. Logs to /home/pi/net_up.log.
+    post-up /usr/local/sbin/net_up.sh >> /home/pi/net_up.log 2>&1 &
+    post-down /usr/bin/pkill -f 'autossh.*-R' 2>/dev/null || true

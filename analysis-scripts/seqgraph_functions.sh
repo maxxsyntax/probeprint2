@@ -19,6 +19,9 @@
 #   - an edge may span at most SEQGRAPH_BETA sequence numbers
 #   - each node keeps at most one incoming and one outgoing edge: the shortest
 #     available in both time and sequence number
+#   - (optional) SEQGRAPH_TAU imposes a no-association penalty: an edge is made
+#     only if its normalized cost clears TAU, so a weak-but-feasible edge is
+#     dropped rather than chaining unrelated devices. Off by default.
 #
 # Connected components are devices, recorded in the `devices` table.
 #
@@ -70,12 +73,23 @@ SEQ_MODULUS=4096
 # positively disagree. Set to 0 to reproduce the ungated behavior.
 SEQGRAPH_GATE_IE=${SEQGRAPH_GATE_IE:-1}
 
+# No-association penalty, after Cappuccino's global-association step. Each
+# candidate edge has a normalized cost c = dt/ALPHA + ds/BETA in (0, 2]: near 0
+# for a tight link, 2 at the gate limits. When TAU > 0 an edge is committed only
+# if c <= TAU, so a frame is left a singleton rather than force-linked to any edge
+# that merely fits ALPHA and BETA -- which is what chains unrelated devices whose
+# sequence counters interleave in a dense capture (FINGERPRINTING.md, "Its real
+# failure mode"). TAU=0 disables the penalty and reproduces the prior behavior
+# exactly (commit the feasible shortest edge); it is the default, so this is inert
+# until tuned per site with --validate, the same way ALPHA and BETA are.
+SEQGRAPH_TAU=${SEQGRAPH_TAU:-0}
+
 # seqgraph_assign [--recompute]
 seqgraph_assign () {
 	local recompute=0
 	[ "${1:-}" = "--recompute" ] && recompute=1
 
-	echo "seqgraph_assign start $(date +"%H:%M:%S.%3N") (alpha=${SEQGRAPH_ALPHA}s beta=${SEQGRAPH_BETA}$([ "$recompute" = 1 ] && echo ' recompute'))"
+	echo "seqgraph_assign start $(date +"%H:%M:%S.%3N") (alpha=${SEQGRAPH_ALPHA}s beta=${SEQGRAPH_BETA} tau=${SEQGRAPH_TAU}$([ "$recompute" = 1 ] && echo ' recompute'))"
 
 	# --- INCREMENTAL vs RECOMPUTE ------------------------------------------
 	# Recompute regroups every frame from scratch: correct, but on a large
@@ -185,7 +199,7 @@ SQL
 
 	mysql -N probeprint <<< "$sql" \
 	| LC_ALL=C awk -v ALPHA="$SEQGRAPH_ALPHA" -v BETA="$SEQGRAPH_BETA" -v MOD="$SEQ_MODULUS" \
-	           -v GATE_IE="$SEQGRAPH_GATE_IE" '
+	           -v GATE_IE="$SEQGRAPH_GATE_IE" -v TAU="$SEQGRAPH_TAU" '
 	BEGIN { FS = "|"; n = 0 }
 
 	{
@@ -288,7 +302,11 @@ SQL
 				}
 			}
 
-			if (best >= 0) {
+			# No-association penalty: with TAU>0 commit the chosen edge only if
+			# its normalized cost dt/ALPHA + ds/BETA clears TAU, else leave node i
+			# unlinked rather than force a weak edge. TAU<=0 is the default and
+			# accepts any feasible edge -- identical to the pre-TAU behavior.
+			if (best >= 0 && (TAU <= 0 || best_dt / ALPHA + best_ds / BETA <= TAU)) {
 				taken_in[best] = 1                # and one outgoing, by construction
 				union(i, best)
 			}
@@ -451,7 +469,7 @@ seqgraph_validate () {
 	local static_pred="substr(wlan_sa,2,1) not in ('2','6','a','e')"
 
 	echo "== sequence graph validation against non-randomized MACs =="
-	echo "   (alpha=${SEQGRAPH_ALPHA}s beta=${SEQGRAPH_BETA} gate_ie=${SEQGRAPH_GATE_IE})"
+	echo "   (alpha=${SEQGRAPH_ALPHA}s beta=${SEQGRAPH_BETA} gate_ie=${SEQGRAPH_GATE_IE} tau=${SEQGRAPH_TAU})"
 	echo
 
 	local static_macs clusters merges splits
@@ -483,8 +501,9 @@ select concat('device ', device_id, ' absorbs ', count(distinct wlan_sa), ' dist
  limit 10;
 SQL
 		echo
-		echo "   Lower SEQGRAPH_ALPHA, or leave SEQGRAPH_GATE_IE=1 so disagreeing"
-		echo "   IE fingerprints block an edge before the merge can happen."
+		echo "   Lower SEQGRAPH_ALPHA, set SEQGRAPH_TAU>0 to drop weak edges, or"
+		echo "   leave SEQGRAPH_GATE_IE=1 so disagreeing IE fingerprints block an"
+		echo "   edge before the merge can happen."
 	fi
 
 	[ "$merges" -eq 0 ] && [ "$splits" -eq 0 ] && echo "   clean: no measurable error against ground truth"

@@ -1,26 +1,31 @@
 # probeprint2 field node (Raspberry Pi)
 
-A headless Raspberry Pi running the **whole pipeline on one board**: it captures
-802.11 probe requests, enriches them (`analysis.sh` in a loop), and serves the
-operator dossier (`display.sh`) — all started at boot by `start.sh`, each in its
-own detached `screen`. It also runs **hostapd**, standing up its own Wi-Fi
-access point so an operator can join it, SSH in, and `screen -r display` to watch
-the heads-up display live, with no wired connection and no separate laptop
-running the analysis. A self-contained field unit, not just a sensor.
+A headless Raspberry Pi **capture node**: it captures 802.11 probe requests and
+keeps its clock synced, started at boot by `platforms/pi/start.sh`, each job in
+its own detached `screen`. It also runs **hostapd**, standing up its own Wi-Fi
+access point so an operator can join it and SSH in. **Enrichment (`analysis.sh`)
+and the display (`display.sh`) run off-node**, not on the Pi: the continuous
+analysis loop overheats the board (~85C, then it throttles and drops off the
+network), so on a Pi you pull the captures to a workstation and enrich/view them
+there. A non-Pi node with better cooling can run the full pipeline on one board
+via the repo-root `start.sh`.
 
 The capture, analysis and display logic all live in the main pipeline
 (`../../capture-scripts/`, `../../analysis-scripts/`, `../../display-scripts/`);
 this directory holds only the **Pi-specific boot and radio glue** — hard-coded
-`/home/pi` paths, driven by cron and `screen`. `start.sh` at the repo root is
-the boot entry point; the scripts here are the older per-step versions it
-supersedes (see *Run on boot* below).
+`/home/pi` paths, driven by cron and `screen`. **`platforms/pi/start.sh` is the
+Pi boot entry point** (timesync + capture only); the repo-root `start.sh` is the
+full-pipeline entry point for non-Pi nodes; `script.sh`/`start_cap.sh` are the
+older per-step versions both supersede (see *Run on boot* below).
 
 | File | Role |
 |---|---|
-| `script.sh` | `@reboot` entry point. Starts `start_cap.sh` in a detached `screen`. |
+| `start.sh` | **Pi `@reboot` entry point.** Sets monitor mode, then starts `timesync` + `capture` screens only (no analysis/display — thermal). |
+| `script.sh` | Older `@reboot` entry point. Starts `start_cap.sh` in a detached `screen`. |
 | `start_cap.sh` | Brings `wlan1` into monitor mode (`airmon-ng`) and runs `build_ssid.sh`. |
 | `start_ad.sh` | Optional channel-hopping `airodump-ng`, off by default. |
-| `hotspot.interfaces`, `net_up.sh` | Field networking when the **operator's phone is the hotspot** (not the node's own AP): the Pi joins over `wlan0`, steps its clock off the phone, and opens a reverse SSH tunnel so ConnectBot reaches it at the phone's `localhost` despite the phone re-rolling its subnet. See **[NETWORKING.md](./NETWORKING.md)**. |
+| `hostapd.conf`, `ap.interfaces` | **The node's own Wi-Fi AP** (static addressing, no DHCP): the phone (and any second Pi) set a static `192.168.1.x` and SSH the Pi at `192.168.1.1` to run `display.sh`. See **[NETWORKING.md](./NETWORKING.md)**. |
+| `usb0.interfaces`, `ap_nat.sh` | Optional internet: a laptop uplink over USB (`10.0.0.0/24`) NATed out for the AP's clients. |
 
 ---
 
@@ -133,11 +138,24 @@ link (IP forwarding / NAT on the host) or give the node its own uplink and keep
 
 ## Run on boot (crontab)
 
-Use the repo's top-level **`start.sh`** as the boot entry point. It sets monitor
-mode up (`airmon-ng`) and then launches the whole pipeline -- capture, an
-`analysis.sh` loop, and the live `display.sh` -- each in its own detached
-`screen`. Install it as a **root** `@reboot` crontab entry (root because monitor
-mode requires it).
+The Pi boot entry point is **`platforms/pi/start.sh`** (not the repo-root
+`start.sh`). It sets monitor mode up (`airmon-ng`) and launches **timesync +
+capture**, each in its own detached `screen` -- but it deliberately does **not**
+start the `analysis.sh` loop or the live `display.sh`, because on a Pi the
+continuous analysis loop drives the board to its ~85C thermal limit and it
+throttles and drops off the network. **On a Pi, enrich and view off-node:** pull
+the captures to a workstation and run `./analysis.sh` and `./display.sh` there.
+
+The repo-root `start.sh` is unchanged and still launches the **full** pipeline
+(capture + analysis + display); it is the right entry point for a mains-powered,
+better-cooled, or non-Pi node. The Pi exception lives only here in `platforms/pi`.
+
+This is safe under the Pi-as-AP model: `hostapd` is its own enabled service and
+comes up before cron fires `@reboot`, and the `airmon-ng check kill` inside the Pi
+start script stops NetworkManager/wpa_supplicant but not `hostapd`, so the AP is
+up and stays up. (If it ever flaps as capture starts, `sudo systemctl restart hostapd`.)
+
+Install as a **root** `@reboot` entry:
 
 ```bash
 sudo crontab -e
@@ -146,20 +164,21 @@ sudo crontab -e
 Add (adjust the path to wherever the repo is checked out):
 
 ```
-@reboot /home/pi/probeprint2/start.sh >> /home/pi/probeprint2/logs/start.log 2>&1
+@reboot /home/pi/probeprint2/platforms/pi/start.sh >> /home/pi/probeprint2/logs/start.log 2>&1
 ```
 
 Notes:
 
 - `@reboot` fires once when cron starts, early in boot -- which is exactly why
   the NTP wait above matters, since the clock may not be set yet at that point.
-  Put the `timedatectl` wait at the top of `start.sh` or `capture-scripts/build_ssid.sh`.
-- `start.sh` runs `airmon-ng check kill` first, stopping NetworkManager and
-  wpa_supplicant so they cannot pull the card back out of monitor mode -- one
-  reason a bare capture is flaky until airodump-ng has "held" the interface.
-  (The rt2800usb driver needs more than this; see *Priming the radio* below.)
-- It starts three named screens: `capture`, `analysis`, `display`. Re-running
-  `start.sh` will not stack duplicates.
+  `platforms/pi/start.sh` starts the `timesync` loop first for this reason.
+- It runs `airmon-ng check kill` first, stopping NetworkManager and wpa_supplicant
+  so they cannot pull the card back out of monitor mode -- one reason a bare
+  capture is flaky until airodump-ng has "held" the interface. (The rt2800usb
+  driver needs more than this; see *Priming the radio* below.)
+- It starts **two** named screens: `timesync`, `capture`. Re-running the script
+  will not stack duplicates. (`analysis` and `display` are intentionally absent on
+  the Pi -- run them off-node.)
 - Confirm the crontab with `sudo crontab -l`; watch boot with
   `tail -f logs/start.log`; list the screens with `screen -ls`.
 
@@ -170,7 +189,7 @@ one you configure in `hostapd.conf` per the main README's Pi build). An operator
 joins that AP, SSHes to the node, and attaches to the live heads-up display:
 
 ```bash
-ssh pi@<node-ap-address>
+ssh pi@192.168.1.1
 screen -r display          # detach again with Ctrl-A then D, capture keeps running
 ```
 
@@ -179,12 +198,9 @@ captures, enriches, and shows the dossier by itself, and the operator just views
 it. Note the capture radio (monitor mode) and the hostapd AP must be **different
 interfaces**: one card cannot serve an AP and sniff in monitor mode at once.
 
-**Alternative: the operator's phone is the hotspot, not the node.** When the
-phone provides the network (and its cellular is the only internet), the node
-joins the phone instead of hosting an AP, and reaches the operator by a reverse
-SSH tunnel — the phone re-rolls its subnet every session, so the node cannot be
-addressed directly. That topology, plus the Termux/ConnectBot phone setup and
-using the phone as an NTP server, is documented in
+The full configuration for that AP — `hostapd.conf`, the static `wlan0` address
+(`192.168.1.1/24`; clients are statically addressed, there is no DHCP), and the
+optional laptop uplink (`usb0`, `10.0.0.0/24`) NATed out for the clients — is in
 **[NETWORKING.md](./NETWORKING.md)**.
 
 The older `script.sh` / `start_cap.sh` pair in this directory did a subset of
